@@ -1,0 +1,12 @@
+# Rust build output
+target/
+/examples/workspace-hud/target/
+
+# wasm-pack output (regenerate with: wasm-pack build --target web)
+/examples/workspace-hud/pkg/
+
+# Elisp build output
+*.elc
+
+# cargo-run-bin local tool install dir
+/.bin/

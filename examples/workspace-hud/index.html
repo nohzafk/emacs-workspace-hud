@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Workspace HUD — emacs-egui-panel demo</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: transparent;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background-color: transparent;
+            opacity: 0;
+            transition: opacity 80ms ease-out;
+        }
+        canvas.ready {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="hud-canvas"></canvas>
+    <script type="module">
+        import init, { start, push_state, push_theme } from "./pkg/workspace_hud.js";
+
+        // Read theme colors handed in via the URL fragment (#bg=...&fg=...).
+        // Emacs appends the current theme so the very first paint uses the
+        // correct colors instead of flashing the default dark theme.
+        function parseInitialTheme() {
+            const hash = window.location.hash.replace(/^#/, "");
+            if (!hash) return null;
+            const params = new URLSearchParams(hash);
+            const bg = params.get("bg");
+            const fg = params.get("fg");
+            const fontSize = params.get("font-size");
+            const surfaceBg = params.get("surface-bg");
+            if (bg && fg) {
+                return JSON.stringify({
+                    bg,
+                    fg,
+                    "font-size": fontSize ? Number(fontSize) : null,
+                    "surface-bg": surfaceBg || null,
+                });
+            }
+            return null;
+        }
+
+        async function run() {
+            try {
+                const canvas = document.getElementById("hud-canvas");
+                await init();
+                await start("hud-canvas");
+
+                // Apply the bootstrapped theme immediately, before any state
+                // arrives, so there is no dark-to-theme flash.
+                const initialTheme = parseInitialTheme();
+                if (initialTheme) {
+                    try {
+                        push_theme(initialTheme);
+                    } catch (e) {
+                        console.error("Error applying initial theme:", e);
+                    }
+                }
+                requestAnimationFrame(() => canvas.classList.add("ready"));
+
+                // Expose push_state globally so Emacs can run window.hudPushState
+                window.hudPushState = (jsonStr) => {
+                    try {
+                        push_state(jsonStr);
+                    } catch (e) {
+                        console.error("Error pushing state to egui WASM:", e);
+                    }
+                };
+
+                window.hudPushTheme = (jsonStr) => {
+                    try {
+                        push_theme(jsonStr);
+                    } catch (e) {
+                        console.error("Error pushing theme to egui WASM:", e);
+                    }
+                };
+
+                console.log("HUD WASM successfully loaded and initialized.");
+            } catch (err) {
+                console.error("Failed to initialize HUD WASM:", err);
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>
