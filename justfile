@@ -30,7 +30,7 @@ setup:
 # Rebuild the demo WASM renderer.
 [group('Build')]
 wasm:
-    cd examples/workspace-hud && wasm-pack build --target web
+    cd renderer && wasm-pack build --target web
 
 # Byte-compile the Lisp as a smoke test.
 [group('Test')]
@@ -42,7 +42,6 @@ compile:
 [group('Test')]
 test:
     {{emacs}} -Q --batch -L lisp -L tests \
-      -l tests/egui-panel-tests.el \
       -l tests/workspace-hud-tests.el \
       -f ert-run-tests-batch-and-exit
 
@@ -53,4 +52,4 @@ check: wasm compile test
 [group('Build')]
 clean:
     rm -f lisp/*.elc tests/*.elc
-    rm -rf examples/workspace-hud/target
+    rm -rf renderer/target

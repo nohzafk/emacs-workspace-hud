@@ -1,131 +1,81 @@
-# Workspace HUD Demo
+# Workspace HUD Features & Configuration
 
-The workspace HUD is the current example interface for `emacs-egui-panel`: a floating card that follows the active project and shows git/workspace status.
+The workspace HUD anchors a gorgeous floating card at the top-right corner of the parent Emacs frame, showing project metrics and Git repository status at a glance.
 
-**Attention Conservation Notice**
+## Features
 
-For: Contributors working on the HUD experience or using it as a framework example
+The HUD dynamically renders a clean dashboard with the following metrics:
+- **Repository Branch**: Resolves your current working branch.
+- **Upstream Divergence**: Displays ahead/behind counts (e.g., `↑2 ↓1`) compared to your configured upstream tracking branch.
+- **Working Tree Changes**: Aggregates insertions and deletions (e.g., `+10 -3`). If changes are untracked-only, binary-only, or file-mode-only, it falls back to a clean changed-file counter (e.g. `2 files`).
+- **Last Commit**: Shows the short hash of the last commit.
+- **Daemons / Sources**: Retains slots for daemon monitoring (such as LSP or Elle MCP status).
 
-What: Current behavior, data payload, and development workflow for `workspace-hud`
+## User Configuration
 
-Action: Keep demo-specific experiments here and move reusable behavior into `egui-panel`
-
-Skip if: You are only changing the generic asset server or child-frame lifecycle
-
-## Purpose
-
-The demo proves that a standalone Emacs Lisp package can push live data into an egui/WASM renderer inside a floating child frame.
-
-It is also where the HUD interface is still being explored. Treat it as a working example and product sketch, not a finished end-user package.
-
-## User Entry Point
+Load the HUD in your `init.el`:
 
 ```elisp
-(add-to-list 'load-path "/path/to/emacs-egui-panel/lisp")
+(add-to-list 'load-path "/path/to/emacs-workspace-hud/lisp")
 (require 'workspace-hud)
-(workspace-hud-toggle)
+
+;; Configure HUD dimensions and margins:
+(setq workspace-hud-width 260
+      workspace-hud-height 230
+      workspace-hud-margin-right 19
+      workspace-hud-margin-top 60)
+
+;; Toggle HUD manually:
+(global-set-key (kbd "C-c h") #'workspace-hud-toggle)
 ```
 
-`workspace-hud-toggle` sets `egui-panel-asset-dir`, registers the HUD refresh hook, installs refresh triggers, and calls `egui-panel-show`.
+### Auto-Mode Visibility
 
-To let the HUD manage visibility automatically:
+To let Emacs manage visibility automatically, enable `workspace-hud-auto-mode`:
 
 ```elisp
 (workspace-hud-auto-mode 1)
 ```
 
-Auto mode keeps the refresh triggers active while hidden, shows the HUD when the selected buffer belongs to a Git repo, and hides the child frame when the selected buffer is outside Git.  If the user hides the HUD with `workspace-hud-toggle`, auto mode pauses reappearance until the user toggles it on again.
+Auto-mode hooks into window selection, buffer changes, and file saves. It automatically displays the HUD whenever you focus on a file inside a Git repo, and hides the child frame when you switch to helper buffers outside Git (such as `*scratch*`, `*Help*`, or Dired). 
 
-## What It Shows
+*Note: If you manually toggle the HUD off while auto-mode is active, automatic reappearance will pause until you explicitly toggle the HUD on again.*
 
-The current card renders:
+## Data Collection Details
 
-- Resolved project root or project name.
-- Working tree line stats, falling back to a changed-path count when numstat
-  has no line data.
-- Local location label.
-- Current git branch, plus upstream ahead/behind counts when available.
-- Last commit hash.
-- MCP and unit fields retained in the renderer schema for experiment continuity.
+Rather than launching external shell wrappers or keeping daemon processes alive, `workspace-hud` leverages Emacs' built-in `vc-git` engine for extremely fast, low-overhead workspace queries.
 
-`mcp-online` is currently always false in the standalone demo. It remains in the schema because the renderer still has a "Sources" section from the original HUD experiment.
+- **Branch Resolution**: `git rev-parse --abbrev-ref HEAD`
+- **Upstream Divergence**: `git rev-list --left-right --count @{upstream}...HEAD`
+- **Tracked Stats**: `git diff --numstat -- .` and `git diff --cached --numstat -- .`
+- **Untracked fallback**: `git status --porcelain`
+- **Last Commit**: `git rev-parse --short HEAD`
 
-## Refresh Behavior
+### State Serialization
 
-The HUD refreshes when the panel is visible.  In auto mode, the same triggers
-also run while the panel is hidden so the HUD can reappear when focus returns
-to a Git-backed buffer.
-
-`window-buffer-change-functions` and `window-selection-change-functions` schedule a debounced refresh using `workspace-hud-debounce`.
-
-`after-save-hook` schedules a faster refresh so git state updates quickly after file saves.
-
-The root is resolved from the parent frame's selected window, falling back to
-the selected window before the panel exists. Timer callbacks often run while
-the current buffer is the xwidget buffer or minibuffer.
-
-## Data Collection
-
-`workspace-hud` uses `vc-git` instead of shelling out directly through a separate process layer.
-
-It collects:
-
-- `git rev-parse --abbrev-ref HEAD` for branch.
-- `git rev-list --left-right --count @{upstream}...HEAD` for upstream
-  divergence, displayed on the right side as `↑2 ↓1`.
-- `git diff --numstat -- .` and `git diff --cached --numstat -- .` for
-  aggregate `+insertions -deletions` stats.
-- `git status --porcelain` as a fallback changed-path count for untracked-only,
-  binary-only, or mode-only changes.
-- `git rev-parse --short HEAD` for last commit.
-In manual mode, non-repo buffers get placeholder state:
+Emacs serializes collected metrics to the following JSON structure before sending it to the WASM runtime:
 
 ```json
 {
-  "branch": "—",
-  "upstream": "",
-  "changes": "+0 -0",
+  "branch": "main",
+  "upstream": "↑1 ↓2",
+  "changes": "+10 -3",
   "location": "Local",
-  "last-commit": "",
-  "project-name": "",
-  "project-root": "",
+  "last-commit": "abc1234",
+  "project-name": "emacs-workspace-hud",
+  "project-root": "/Users/randall/projects/emacs-workspace-hud",
   "mcp-online": false,
   "units": []
 }
 ```
 
-In auto mode, non-repo buffers hide the child frame instead.
+## Compilation & Verification
 
-## Renderer Development
-
-Build the renderer:
+Building the egui WASM bundle runs entirely through `just`:
 
 ```sh
-just wasm
+just setup   # One-time toolchain setup
+just wasm    # Compiles renderer to /renderer/pkg/
+just test    # Runs HEADLESS Lisp tests
+just check   # Runs wasm build + byte-compile + tests
 ```
-
-Run the Lisp tests:
-
-```sh
-just test
-```
-
-Run the full local check:
-
-```sh
-just check
-```
-
-`check` rebuilds the WASM renderer, byte-compiles the Lisp files, and runs the ERT tests.
-
-## Current Experiment Questions
-
-The demo is the right place to decide:
-
-- Which HUD sections are useful enough to keep.
-- Whether the "Sources" section belongs in the standalone demo.
-- How compact the card should be.
-- Whether click actions should be added.
-- Whether multiple panel roles need separate instances.
-
-Do not add project-specific data collection to `egui-panel.el`. Keep `egui-panel` generic and let examples own their payloads.

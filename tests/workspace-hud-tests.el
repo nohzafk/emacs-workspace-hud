@@ -1,9 +1,13 @@
-;;; workspace-hud-tests.el --- ERT tests for the workspace-hud demo -*- lexical-binding: t; -*-
+;;; workspace-hud-tests.el --- ERT tests for the workspace-hud -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
-;; Tests for the demo's git collection (via vc-git) against throwaway repos,
-;; plus the rendered state plist shape.
+;; Unified test suite for the workspace HUD, covering:
+;; 1. HTTP server logic, content-type mapping, binary safety, and path resolution.
+;; 2. Loopback HTTP integration tests for serving the compiled WASM renderer.
+;; 3. Git collector (via vc-git) against mock repositories.
+;; 4. State plist mapping and JSON encoding shapes.
+;; 5. Automated mode visibility controls.
 ;;
 ;; Run with:
 ;;   emacs -Q --batch -L lisp -L tests -l tests/workspace-hud-tests.el \
@@ -13,7 +17,148 @@
 
 (require 'ert)
 (require 'cl-lib)
+(require 'url)
 (require 'workspace-hud)
+
+(defconst workspace-hud-tests--asset-dir
+  (expand-file-name "../renderer/"
+                    (file-name-directory (or load-file-name buffer-file-name)))
+  "Asset directory used by the integration test.")
+
+;; ---------------------------------------------------------------------------
+;; HTTP Server & Path Resolution Unit Tests (from egui-panel)
+;; ---------------------------------------------------------------------------
+
+(ert-deftest workspace-hud-test-content-type ()
+  (should (string-prefix-p "text/html"       (workspace-hud--content-type "index.html")))
+  (should (string-prefix-p "text/javascript" (workspace-hud--content-type "x.JS")))
+  (should (equal "application/wasm"          (workspace-hud--content-type "x.wasm")))
+  (should (string-prefix-p "application/json" (workspace-hud--content-type "x.json")))
+  (should (string-prefix-p "text/css"        (workspace-hud--content-type "x.css")))
+  (should (equal "application/octet-stream"  (workspace-hud--content-type "x.bin")))
+  (should (equal "application/octet-stream"  (workspace-hud--content-type "noext"))))
+
+(ert-deftest workspace-hud-test-read-file-bytes-is-binary-safe ()
+  (let ((f (make-temp-file "workspace-hud-bytes")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'binary))
+            (with-temp-file f
+              (set-buffer-multibyte nil)
+              (insert (unibyte-string 0 1 2 255 65))))
+          (let ((bytes (workspace-hud--read-file-bytes f)))
+            (should-not (multibyte-string-p bytes))
+            (should (= (length bytes) 5))
+            (should (= (aref bytes 3) 255))
+            (should (= (aref bytes 4) ?A))))
+      (delete-file f))))
+
+(ert-deftest workspace-hud-test-resolve-asset ()
+  (cl-letf (((symbol-function 'workspace-hud--asset-dir)
+             (lambda () workspace-hud-tests--asset-dir)))
+    ;; Valid requests resolve to a file.
+    (should (workspace-hud--resolve-asset "/"))
+    (should (workspace-hud--resolve-asset "/index.html"))
+    (should (workspace-hud--resolve-asset "/index.html?v=1"))   ; query stripped
+    (should (workspace-hud--resolve-asset "/index.html#frag"))  ; fragment stripped
+    ;; Missing files and directories are rejected.
+    (should-not (workspace-hud--resolve-asset "/does-not-exist"))
+    (should-not (workspace-hud--resolve-asset "/pkg"))          ; a directory
+    ;; Path traversal is rejected regardless of how it is spelled.
+    (should-not (workspace-hud--resolve-asset "/../../../etc/passwd"))
+    (should-not (workspace-hud--resolve-asset "/etc/passwd"))))
+
+(ert-deftest workspace-hud-test-url-with-theme ()
+  (cl-letf (((symbol-function 'face-background) (lambda (&rest _) "#112233"))
+            ((symbol-function 'face-foreground) (lambda (&rest _) "#aabbcc"))
+            ((symbol-function 'face-attribute)
+             (lambda (_face attr &rest _)
+               (pcase attr
+                 (:height 150)
+                 (_ nil)))))
+    (let ((workspace-hud--url "http://127.0.0.1:9999/index.html")
+          (workspace-hud-surface-background "#ddeeff"))
+      (let ((u (workspace-hud--url-with-theme)))
+        ;; '#' is hexified to %23 by `url-hexify-string'.
+        (should (string-match-p "#bg=%23112233&fg=%23aabbcc" u))
+        (should (string-match-p "&font-size=15\\.0" u))
+        (should (string-match-p "&surface-bg=%23ddeeff\\'" u))
+        (should (string-prefix-p "http://127.0.0.1:9999/index.html#" u))))))
+
+(ert-deftest workspace-hud-test-prepare-xwidget-buffer-hides-buffer ()
+  (let ((workspace-hud-xwidget-buffer-name
+         (generate-new-buffer-name " *workspace-hud-test-xwidget*")))
+    (with-temp-buffer
+      (workspace-hud--prepare-xwidget-buffer (current-buffer))
+      (should (equal (buffer-name) workspace-hud-xwidget-buffer-name))
+      (should (string-prefix-p " " (buffer-name)))
+      (should-not mode-line-format)
+      (should-not header-line-format)
+      (should-not display-line-numbers)
+      (should (equal left-fringe-width 0))
+      (should (equal right-fringe-width 0)))))
+
+;; ---------------------------------------------------------------------------
+;; Loopback HTTP integration test
+;; ---------------------------------------------------------------------------
+
+(defun workspace-hud-tests--fetch (path)
+  "Fetch PATH from the running test server.
+Return a plist (:status :content-type :content-length)."
+  (let* ((u (format "http://127.0.0.1:%s%s" workspace-hud--httpd-port path))
+         (buf (url-retrieve-synchronously u t t 10)))
+    (unwind-protect
+        (with-current-buffer buf
+          (goto-char (point-min))
+          (let* ((status-line (buffer-substring (point) (line-end-position)))
+                 (code (when (string-match "HTTP/1\\.[01] \\([0-9]+\\)" status-line)
+                         (string-to-number (match-string 1 status-line))))
+                 (ctype (progn (goto-char (point-min))
+                               (when (re-search-forward "^Content-Type: \\(.*\\)" nil t)
+                                 (string-trim (match-string 1)))))
+                 (clen (progn (goto-char (point-min))
+                              (when (re-search-forward "^Content-Length: \\([0-9]+\\)" nil t)
+                                (string-to-number (match-string 1))))))
+            (list :status code :content-type ctype :content-length clen)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(defun workspace-hud-tests--assert-fetch (path expect-status expect-ctype)
+  "Fetch PATH and assert the status code and Content-Type prefix; return plist."
+  (let ((r (workspace-hud-tests--fetch path)))
+    (should (equal (plist-get r :status) expect-status))
+    (should (string-prefix-p expect-ctype (or (plist-get r :content-type) "")))
+    r))
+
+(ert-deftest workspace-hud-test-httpd-serves-assets ()
+  (skip-unless (file-readable-p
+                (expand-file-name "pkg/workspace_hud_bg.wasm"
+                                  workspace-hud-tests--asset-dir)))
+  (cl-letf (((symbol-function 'workspace-hud--asset-dir)
+             (lambda () workspace-hud-tests--asset-dir)))
+    (unwind-protect
+        (progn
+          (workspace-hud--ensure-httpd)
+          (should (integerp workspace-hud--httpd-port))
+          (workspace-hud-tests--assert-fetch "/" 200 "text/html")
+          (workspace-hud-tests--assert-fetch "/index.html" 200 "text/html")
+          (workspace-hud-tests--assert-fetch "/pkg/workspace_hud.js" 200 "text/javascript")
+          (let* ((wasm-path (expand-file-name "pkg/workspace_hud_bg.wasm"
+                                              workspace-hud-tests--asset-dir))
+                 (r (workspace-hud-tests--assert-fetch "/pkg/workspace_hud_bg.wasm"
+                                                    200 "application/wasm")))
+            ;; Binary served intact: declared length == file size on disk.
+            (should (= (plist-get r :content-length)
+                       (file-attribute-size (file-attributes wasm-path)))))
+          (workspace-hud-tests--assert-fetch "/does-not-exist" 404 "text/plain")
+          (workspace-hud-tests--assert-fetch "/etc/passwd" 404 "text/plain"))
+      (workspace-hud-cleanup))
+    ;; Cleanup tore the listener down.
+    (should-not (and workspace-hud--httpd-process
+                     (process-live-p workspace-hud--httpd-process)))))
+
+;; ---------------------------------------------------------------------------
+;; Git collection (via vc-git) against throwaway repos
+;; ---------------------------------------------------------------------------
 
 (defun workspace-hud-tests--git (root &rest args)
   "Run git ARGS in ROOT, signalling on failure."
@@ -132,50 +277,32 @@
     ;; Empty units encodes as [], not null.
     (should (string-match-p "\"units\":\\[\\]" json))))
 
-(ert-deftest workspace-hud-test-toggle-applies-demo-frame-size ()
-  "The demo owns its frame size instead of inheriting the generic default."
-  (let ((workspace-hud-width 301)
-        (workspace-hud-height 211)
-        (egui-panel-width 1)
-        (egui-panel-height 2)
-        (egui-panel-asset-dir nil)
-        (egui-panel-ready-hook nil)
-        shown
-        setup)
-    (cl-letf (((symbol-function 'egui-panel-visible-p) (lambda () nil))
-              ((symbol-function 'egui-panel-show) (lambda () (setq shown t)))
-              ((symbol-function 'workspace-hud--setup-triggers)
-               (lambda () (setq setup t))))
+;; ---------------------------------------------------------------------------
+;; Mode / Visibility Mock Tests
+;; ---------------------------------------------------------------------------
+
+(ert-deftest workspace-hud-test-toggle-shows-manual ()
+  (let (shown setup)
+    (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--setup-triggers) (lambda () (setq setup t))))
       (workspace-hud-toggle)
-      (should (= egui-panel-width workspace-hud-width))
-      (should (= egui-panel-height workspace-hud-height))
-      (should (equal egui-panel-asset-dir (workspace-hud--asset-dir)))
-      (should (memq #'workspace-hud-refresh egui-panel-ready-hook))
+      (should-not workspace-hud--auto-paused)
       (should setup)
       (should shown))))
 
 (ert-deftest workspace-hud-test-auto-sync-shows-in-repo ()
   "Auto mode shows the panel when the selected buffer belongs to a repo."
   (let ((workspace-hud-auto-mode t)
-        (workspace-hud-width 301)
-        (workspace-hud-height 211)
-        (egui-panel-width 1)
-        (egui-panel-height 2)
-        (egui-panel-asset-dir nil)
-        (egui-panel-ready-hook nil)
         shown
         setup)
     (cl-letf (((symbol-function 'workspace-hud--resolve-root)
                (lambda () "/tmp/repo"))
-              ((symbol-function 'egui-panel-visible-p) (lambda () nil))
-              ((symbol-function 'egui-panel-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud--setup-triggers)
                (lambda () (setq setup t))))
       (workspace-hud--sync-auto)
-      (should (= egui-panel-width workspace-hud-width))
-      (should (= egui-panel-height workspace-hud-height))
-      (should (equal egui-panel-asset-dir (workspace-hud--asset-dir)))
-      (should (memq #'workspace-hud-refresh egui-panel-ready-hook))
       (should setup)
       (should shown))))
 
@@ -186,10 +313,10 @@
         shown)
     (cl-letf (((symbol-function 'workspace-hud--resolve-root)
                (lambda () "/tmp/repo"))
-              ((symbol-function 'egui-panel-visible-p) (lambda () t))
+              ((symbol-function 'workspace-hud-visible-p) (lambda () t))
               ((symbol-function 'workspace-hud-refresh)
                (lambda () (setq refreshed t)))
-              ((symbol-function 'egui-panel-show)
+              ((symbol-function 'workspace-hud-show)
                (lambda () (setq shown t))))
       (workspace-hud--sync-auto)
       (should refreshed)
@@ -202,8 +329,8 @@
         shown)
     (cl-letf (((symbol-function 'workspace-hud--resolve-root)
                (lambda () nil))
-              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'egui-panel-show) (lambda () (setq shown t))))
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
       (workspace-hud--sync-auto)
       (should hidden)
       (should-not shown))))
@@ -219,8 +346,8 @@
                (lambda ()
                  (setq resolved t)
                  "/tmp/repo"))
-              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'egui-panel-show) (lambda () (setq shown t))))
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
       (workspace-hud--sync-auto)
       (should hidden)
       (should-not shown)
@@ -234,10 +361,10 @@
         themed)
     (cl-letf (((symbol-function 'workspace-hud--resolve-root)
                (lambda () nil))
-              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'egui-panel-push-state)
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'workspace-hud--push-state)
                (lambda (_state) (setq pushed t)))
-              ((symbol-function 'egui-panel-push-theme)
+              ((symbol-function 'workspace-hud--push-theme)
                (lambda () (setq themed t))))
       (workspace-hud-refresh)
       (should hidden)
@@ -253,10 +380,10 @@
         themed)
     (cl-letf (((symbol-function 'workspace-hud--resolve-root)
                (lambda () "/tmp/repo"))
-              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'egui-panel-push-state)
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'workspace-hud--push-state)
                (lambda (_state) (setq pushed t)))
-              ((symbol-function 'egui-panel-push-theme)
+              ((symbol-function 'workspace-hud--push-theme)
                (lambda () (setq themed t))))
       (workspace-hud-refresh)
       (should hidden)
@@ -268,7 +395,7 @@
   (let ((workspace-hud-auto-mode t)
         (workspace-hud--debounce-timer nil)
         scheduled)
-    (cl-letf (((symbol-function 'egui-panel-visible-p) (lambda () nil))
+    (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))
               ((symbol-function 'run-with-idle-timer)
                (lambda (_delay _repeat fn)
                  (setq scheduled fn)
@@ -281,7 +408,7 @@
   (let ((workspace-hud-auto-mode t)
         (workspace-hud--auto-paused nil)
         hidden)
-    (cl-letf (((symbol-function 'egui-panel-hide) (lambda () (setq hidden t))))
+    (cl-letf (((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
       (workspace-hud--hide-manual)
       (should hidden)
       (should workspace-hud--auto-paused))))
@@ -291,7 +418,7 @@
   (let ((workspace-hud--auto-paused t)
         shown
         setup)
-    (cl-letf (((symbol-function 'egui-panel-show) (lambda () (setq shown t)))
+    (cl-letf (((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud--setup-triggers)
                (lambda () (setq setup t))))
       (workspace-hud--show-manual)

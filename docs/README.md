@@ -1,40 +1,21 @@
-# emacs-egui-panel Docs
+# Emacs Workspace HUD Documentation
 
-Current documentation for the standalone `emacs-egui-panel` project and its workspace HUD example.
+Current documentation for the consolidated `emacs-workspace-hud` package and its Rust WebAssembly renderer.
 
-**Attention Conservation Notice**
+## Current Documentation
 
-For: Contributors deciding where to read or edit documentation
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) explains the internal mechanics: the pure-Elisp asset server process, child-frame/xwidget layout management, JSON serialization, and WASM renderer lifecycle.
+- [`WORKSPACE-HUD.md`](WORKSPACE-HUD.md) explains the features, customization options (sizes, margins, backgrounds), Git VC extraction logic, and auto-mode scheduling.
 
-What: The docs map after extracting this project from `emacs-hypervisor`
+## Package Layout Map
 
-Action: Use the architecture and demo docs for implementation work; use the design post for the project history
+The unified codebase consists of the following components:
 
-Skip if: You only need the quick setup commands in the root README
+- [`../lisp/workspace-hud.el`](../lisp/workspace-hud.el): The single core Emacs Lisp package (server, frame, and Git collector).
+- [`../renderer/`](../renderer/): The egui Rust and WASM renderer code.
+- [`../tests/workspace-hud-tests.el`](../tests/workspace-hud-tests.el): The comprehensive unit and integration ERT test suite.
 
-## Current Docs
+## Documentation Guidelines
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) explains the standalone framework: the pure-Elisp asset server, child-frame/xwidget lifecycle, JSON push API, and WASM renderer contract.
-
-[`WORKSPACE-HUD.md`](WORKSPACE-HUD.md) explains the example HUD interface. This is the live experiment that exercises the reusable panel framework with project and git status.
-
-[`why-xwidget-for-the-hud.md`](why-xwidget-for-the-hud.md) is a concise post about how the HUD idea moved from broad experiment to the current `xwidget-webkit` architecture.
-
-## Removed From The Current Surface
-
-The old top-level docs described a coupled `emacs-hypervisor` plus Elle actor design. That is no longer the project architecture.
-
-The current project keeps the useful findings from those experiments, but the implementation now lives in:
-
-- [`../lisp/egui-panel.el`](../lisp/egui-panel.el): reusable panel framework
-- [`../lisp/workspace-hud.el`](../lisp/workspace-hud.el): workspace HUD demo controller
-- [`../examples/workspace-hud/`](../examples/workspace-hud/): Rust/egui WASM renderer
-- [`../tests/`](../tests/): ERT tests for framework and demo behavior
-
-## Documentation Rules
-
-Keep current docs focused on the standalone package.
-
-Use current package names: `egui-panel`, `workspace-hud`, and `emacs-egui-panel`.
-
-Only mention `emacs-hypervisor` or Elle Lisp when describing project history.
+- Always document functions and options using the `workspace-hud-` namespace.
+- Keep the design clean, premium, and focused exclusively on the Emacs Workspace HUD.

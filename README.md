@@ -1,124 +1,90 @@
-# emacs-egui-panel
+# Emacs Workspace HUD
 
-A reusable **"push JSON → render a themable floating egui panel"** widget for
-Emacs.
+A modern, highly polished, premium **Workspace Status Heads-Up Display (HUD)** for Emacs. 
 
-**Attention Conservation Notice**
+It renders a gorgeous floating status card anchored to the top-right corner of your selected Emacs frame. The interface is built in Rust using the [egui](https://github.com/emilk/egui) library, compiled to WebAssembly, and rendered smoothly inside a focusless `xwidget-webkit` child frame.
 
-For: Contributors and users trying the panel or the workspace HUD demo
-
-What: Standalone setup, build, and reuse notes for `emacs-egui-panel`
-
-Action: Read the Development and Run sections before changing code or testing the demo
-
-Skip if: You already know how to load `egui-panel.el` and have rebuilt the WASM bundle
-
-The panel is a [egui](https://github.com/emilk/egui) application compiled to
-WebAssembly and rendered inside an `xwidget-webkit` child frame anchored to a
-corner of your Emacs frame. Your Emacs Lisp pushes JSON; the panel draws it.
-
-This grew out of the corner HUD experiment in
-[emacs-hypervisor](https://github.com/nohzafk/emacs-hypervisor) and was
-extracted into a standalone project so the rendering mechanism can be reused
-independently of any particular data source.
-
-The current repo does **not** depend on `emacs-hypervisor` or Elle Lisp. The
-included workspace HUD is an example interface and testbed for the framework.
+```text
+  +----------------------------------------------------+
+  | Emacs Window                                 [HUD] |
+  |                                 +----------------+ |
+  |                                 | ENVIRONMENT    | |
+  |                                 | Changes  +0 -0 | |
+  |                                 | main    up-to  | |
+  |                                 | abc1234        | |
+  |                                 |                | |
+  |                                 | SOURCES        | |
+  |                                 | Elle MCP Online| |
+  |                                 +----------------+ |
+  |                                                    |
+  |                                                    |
+  +----------------------------------------------------+
+```
 
 ## Why a local HTTP server?
 
-WebKit refuses to instantiate WebAssembly from `file://` origins, so the assets
-must be served over `http://`. Rather than depend on an external binary or a
-global listener, `egui-panel` runs a **tiny HTTP server in pure Emacs Lisp**
-(`make-network-process`) bound to `127.0.0.1` on an ephemeral port, serving only
-the panel's `index.html` and `pkg/` bundle. No external process, no npm, no CDN.
+WebKit refuses to instantiate WebAssembly from `file://` origins for security reasons, so the assets must be served over an `http://` origin. Rather than relying on external web daemons, global network listeners, npm, or CDN dependencies, this package runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port. It serves only the HUD's compiled `index.html` and `pkg/` WASM bundle entirely in-process and securely.
 
-## Layout
+## Repository Layout
 
 ```text
-emacs-egui-panel/
+emacs-workspace-hud/
 ├── lisp/
-│   ├── egui-panel.el        # the reusable widget (server + child frame + push API)
-│   └── workspace-hud.el     # flagship demo: a git/project status card
-├── docs/                    # current architecture, demo notes, and design post
-├── tests/                   # ERT coverage for the widget and demo collector
-└── examples/workspace-hud/  # the egui/WASM renderer for the demo
-    ├── src/lib.rs           #   egui app + push_state/push_theme bindings
-    ├── index.html           #   HTML shell (canvas + theme bootstrap)
-    └── pkg/                 #   wasm-pack output (generated)
+│   └── workspace-hud.el     # Core package: asset server + child frame lifecycle + Git collection
+├── renderer/                # The egui/WASM status card renderer
+│   ├── src/lib.rs           #   Rust egui app & push bindings
+│   ├── index.html           #   HTML bootstrap shell (exposes JS/WASM bridges)
+│   └── pkg/                 #   Generated WebAssembly bundle (wasm-pack output)
+├── docs/                    # Architectural guidelines and detailed notes
+├── tests/                   # ERT test suite covering server, path traversal, Git, and auto modes
+└── Cargo.toml               # Workspace configuration
 ```
-
-Start with [`docs/README.md`](docs/README.md) for the current docs map.
 
 ## Requirements
 
 - Emacs 29.1+ built **with xwidget support** (`(featurep 'xwidget-internal)`).
-- For the demo: `git` and, optionally, the `gh` CLI.
-- Project automation: [`just`](https://github.com/casey/just).
-- To rebuild the renderer: a Rust toolchain and
-  [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
+- For status collection: `git` installed on your path.
+- Project automation: [`just`](https://github.com/casey/just) (optional, but highly recommended).
+- To compile the renderer: a Rust toolchain and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
 
-## Development
+## Build the Renderer
 
-Project automation runs through [`just`](https://github.com/casey/just):
-
-```sh
-cargo install just  # one-time, if your system package manager does not provide it
-just                # list recipes
-just test           # run the ERT suite
-just wasm           # rebuild the WASM renderer
-```
-
-## Build the renderer
+Run the automated setup and compile recipes through `just`:
 
 ```sh
-just wasm
-# or directly:
-cd examples/workspace-hud && wasm-pack build --target web
+just setup   # Installs the wasm32 Rust target and wasm-pack if missing
+just wasm    # Compiles the Rust renderer into WebAssembly assets
 ```
 
-This produces `examples/workspace-hud/pkg/` (`workspace_hud.js` +
-`workspace_hud_bg.wasm`).
+If you do not have `just`, you can compile manually:
+```sh
+cd renderer && wasm-pack build --target web
+```
+This generates the WebAssembly binaries and JS binders inside `renderer/pkg/`.
 
-## Run the demo
+## Running the HUD
+
+To load and open the Workspace HUD in Emacs:
 
 ```elisp
 (add-to-list 'load-path "/path/to/emacs-egui-panel/lisp")
 (require 'workspace-hud)
+
+;; Toggle the HUD manually:
 (workspace-hud-toggle)
 ```
 
-For automatic visibility, enable:
+### Automatic Mode
+
+Enable `workspace-hud-auto-mode` to let Emacs manage visibility automatically. The status card will seamlessly appear when you edit files in a Git repository and automatically hide when you move to buffers outside a repository (like dired, help, or scratch):
 
 ```elisp
 (workspace-hud-auto-mode 1)
 ```
 
-The card appears in the top-right corner and follows the active buffer's git
-project, refreshing on buffer switches and saves.  In auto mode it hides when
-the selected buffer is outside a Git repo and reappears when you return to one.
-If you hide it with `workspace-hud-toggle`, automatic reappearance stays paused
-until you toggle it on again.
+## How It Works (Data Flow)
 
-## Reusing the widget
-
-`egui-panel` is data-source agnostic. To drive your own panel:
-
-```elisp
-(require 'egui-panel)
-(setq egui-panel-asset-dir "/path/to/your/wasm/bundle/")  ; has index.html + pkg/
-(add-hook 'egui-panel-ready-hook
-          (lambda () (egui-panel-push-state '(:hello "world"))))
-(egui-panel-show)
-```
-
-The bundle's HTML shell must expose `window.hudPushState(json)` and
-`window.hudPushTheme(json)` (or set `egui-panel-push-state-js` /
-`egui-panel-push-theme-js` to your own global names).
-
-## Status
-
-Working standalone framework with an experimental workspace HUD demo. The next
-work is refining the HUD interface, expanding the generic panel API where real
-uses require it, and deciding how much interactivity should flow back from WASM
-to Emacs.
+1. **Lifecycle Activation**: Calling `workspace-hud-toggle` or changing buffers in auto-mode launches the tiny pure-Elisp HTTP server and maps the xwidget child frame to the top-right corner.
+2. **Theme Bootstrapping**: Emacs reads your current active theme colors (background, foreground, and font heights) and passes them to WebKit via a URL fragment (e.g. `#bg=#0c0c10&fg=#e6ebff`) to guarantee a seamless, zero-flash first paint.
+3. **Data Collection**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics).
+4. **Programmatic Pushes**: Emacs encodes the workspace state plist to JSON and calls the WebKit bridge `window.hudPushState(json)` dynamically. Egui replaces the state model and requests an immediate repaint, redrawing the canvas in microseconds.
