@@ -85,6 +85,19 @@
         (should (string-match-p "&surface-bg=%23ddeeff\\'" u))
         (should (string-prefix-p "http://127.0.0.1:9999/index.html#" u))))))
 
+(ert-deftest egui-panel-test-prepare-xwidget-buffer-hides-buffer ()
+  (let ((egui-panel-xwidget-buffer-name
+         (generate-new-buffer-name " *egui-panel-test-xwidget*")))
+    (with-temp-buffer
+      (egui-panel--prepare-xwidget-buffer (current-buffer))
+      (should (equal (buffer-name) egui-panel-xwidget-buffer-name))
+      (should (string-prefix-p " " (buffer-name)))
+      (should-not mode-line-format)
+      (should-not header-line-format)
+      (should-not display-line-numbers)
+      (should (equal left-fringe-width 0))
+      (should (equal right-fringe-width 0)))))
+
 ;; ---------------------------------------------------------------------------
 ;; End-to-end: pure-Elisp asset server over loopback
 ;; ---------------------------------------------------------------------------

@@ -72,6 +72,12 @@ An application must set this before showing the panel.")
 Applications use this to push initial state.  It also runs on each
 re-show of an already-initialized panel.")
 
+(defcustom egui-panel-xwidget-buffer-name " *egui-panel-xwidget*"
+  "Name for the internal xwidget buffer.
+The leading space follows Emacs' hidden-buffer convention, keeping the panel's
+xwidget buffer out of normal buffer switchers such as `consult-buffer'."
+  :type 'string)
+
 ;; Internal state (single panel for now).
 (defvar egui-panel--frame nil)
 (defvar egui-panel--parent-frame nil)
@@ -302,6 +308,16 @@ Emacs theme instead of flashing a default."
 ;; Session lifecycle
 ;; ---------------------------------------------------------------------------
 
+(defun egui-panel--prepare-xwidget-buffer (buf)
+  "Hide BUF from buffer switchers and strip its window chrome."
+  (with-current-buffer buf
+    (rename-buffer egui-panel-xwidget-buffer-name t)
+    (setq-local mode-line-format nil)
+    (setq-local header-line-format nil)
+    (setq-local display-line-numbers nil)
+    (setq-local left-fringe-width 0)
+    (setq-local right-fringe-width 0)))
+
 (defun egui-panel--setup-hooks ()
   "Register frame-tracking hooks."
   (add-hook 'window-size-change-functions #'egui-panel--on-parent-resize)
@@ -341,12 +357,7 @@ Emacs theme instead of flashing a default."
                   (set-window-configuration parent-win-config))
                 (set-window-configuration child-win-config)
                 (setq egui-panel--session session)
-                (with-current-buffer buf
-                  (setq-local mode-line-format nil)
-                  (setq-local header-line-format nil)
-                  (setq-local display-line-numbers nil)
-                  (setq-local left-fringe-width 0)
-                  (setq-local right-fringe-width 0))
+                (egui-panel--prepare-xwidget-buffer buf)
                 (set-window-buffer window buf)
                 (set-window-dedicated-p window t)
                 ;; Only kill our own throwaway placeholder, never a user buffer.
