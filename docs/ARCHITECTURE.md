@@ -131,7 +131,7 @@ Theme is presentation state. It bypasses any application data model and is pushe
 3. Create the child frame if needed.
 4. Load `index.html` into a new `xwidget-webkit` session.
 5. Restore parent and child window configurations so the xwidget command does not disturb the user's layout.
-6. Strip the xwidget buffer's mode line, header line, fringes, and line numbers.
+6. Rename the xwidget buffer to a leading-space hidden name, then strip its mode line, header line, fringes, and line numbers.
 7. Push theme and run `egui-panel-ready-hook`.
 
 `egui-panel-hide` hides the child frame without destroying the session.

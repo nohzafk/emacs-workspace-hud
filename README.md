@@ -88,8 +88,17 @@ This produces `examples/workspace-hud/pkg/` (`workspace_hud.js` +
 (workspace-hud-toggle)
 ```
 
+For automatic visibility, enable:
+
+```elisp
+(workspace-hud-auto-mode 1)
+```
+
 The card appears in the top-right corner and follows the active buffer's git
-project, refreshing on buffer switches and saves.
+project, refreshing on buffer switches and saves.  In auto mode it hides when
+the selected buffer is outside a Git repo and reappears when you return to one.
+If you hide it with `workspace-hud-toggle`, automatic reappearance stays paused
+until you toggle it on again.
 
 ## Reusing the widget
 

@@ -28,6 +28,14 @@ It is also where the HUD interface is still being explored. Treat it as a workin
 
 `workspace-hud-toggle` sets `egui-panel-asset-dir`, registers the HUD refresh hook, installs refresh triggers, and calls `egui-panel-show`.
 
+To let the HUD manage visibility automatically:
+
+```elisp
+(workspace-hud-auto-mode 1)
+```
+
+Auto mode keeps the refresh triggers active while hidden, shows the HUD when the selected buffer belongs to a Git repo, and hides the child frame when the selected buffer is outside Git.  If the user hides the HUD with `workspace-hud-toggle`, auto mode pauses reappearance until the user toggles it on again.
+
 ## What It Shows
 
 The current card renders:
@@ -44,13 +52,17 @@ The current card renders:
 
 ## Refresh Behavior
 
-The HUD refreshes when the panel is visible.
+The HUD refreshes when the panel is visible.  In auto mode, the same triggers
+also run while the panel is hidden so the HUD can reappear when focus returns
+to a Git-backed buffer.
 
 `window-buffer-change-functions` and `window-selection-change-functions` schedule a debounced refresh using `workspace-hud-debounce`.
 
 `after-save-hook` schedules a faster refresh so git state updates quickly after file saves.
 
-The root is resolved from the parent frame's selected window, not from `current-buffer`. Timer callbacks often run while the current buffer is the xwidget buffer or minibuffer.
+The root is resolved from the parent frame's selected window, falling back to
+the selected window before the panel exists. Timer callbacks often run while
+the current buffer is the xwidget buffer or minibuffer.
 
 ## Data Collection
 
@@ -66,7 +78,7 @@ It collects:
 - `git status --porcelain` as a fallback changed-path count for untracked-only,
   binary-only, or mode-only changes.
 - `git rev-parse --short HEAD` for last commit.
-Non-repo buffers get placeholder state:
+In manual mode, non-repo buffers get placeholder state:
 
 ```json
 {
@@ -81,6 +93,8 @@ Non-repo buffers get placeholder state:
   "units": []
 }
 ```
+
+In auto mode, non-repo buffers hide the child frame instead.
 
 ## Renderer Development
 

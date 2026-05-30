@@ -47,9 +47,22 @@
 
 (defvar workspace-hud--debounce-timer nil)
 
+(defvar workspace-hud-auto-mode nil
+  "Non-nil when the workspace HUD manages visibility automatically.")
+
+(defvar workspace-hud--auto-paused nil
+  "Non-nil when manual toggle has paused automatic HUD reappearance.")
+
 (defun workspace-hud--asset-dir ()
   "Locate the demo asset directory containing index.html and pkg/."
   (expand-file-name "../examples/workspace-hud/" workspace-hud--dir))
+
+(defun workspace-hud--configure-panel ()
+  "Apply workspace HUD settings to the reusable panel."
+  (setq egui-panel-width workspace-hud-width
+        egui-panel-height workspace-hud-height
+        egui-panel-asset-dir (workspace-hud--asset-dir))
+  (add-hook 'egui-panel-ready-hook #'workspace-hud-refresh))
 
 ;; ---------------------------------------------------------------------------
 ;; Git collection (via vc-git)
@@ -160,12 +173,13 @@
 
 (defun workspace-hud--resolve-root ()
   "Resolve the repo root from the buffer the user is actually looking at.
-Refreshes fire from idle timers where `current-buffer' is unpredictable, so
-resolve against the parent frame's selected window instead."
+Refreshes fire from idle timers where `current-buffer' is unpredictable.  When
+the panel has a parent frame, use that frame's selected window; otherwise use
+the selected window in the current frame."
   (let ((buf (if (frame-live-p egui-panel--parent-frame)
                  (window-buffer
                   (frame-selected-window egui-panel--parent-frame))
-               (current-buffer))))
+               (window-buffer (selected-window)))))
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (workspace-hud--repo-root)))))
@@ -173,7 +187,6 @@ resolve against the parent frame's selected window instead."
 (defun workspace-hud-refresh ()
   "Collect workspace/git status and push it to the panel."
   (interactive)
-  (egui-panel-push-theme)
   (let* ((root (workspace-hud--resolve-root))
          (root (and root (directory-file-name (expand-file-name root))))
          (state
@@ -191,28 +204,54 @@ resolve against the parent frame's selected window instead."
                   :last-commit ""
                   :project-name "" :project-root ""
                   :mcp-online :json-false :units []))))
-    (egui-panel-push-state state)))
+    (if (and workspace-hud-auto-mode
+             (or workspace-hud--auto-paused (not root)))
+        (egui-panel-hide)
+      (egui-panel-push-theme)
+      (egui-panel-push-state state))))
 
 ;; ---------------------------------------------------------------------------
 ;; Event-driven triggers
 ;; ---------------------------------------------------------------------------
 
+(defun workspace-hud--schedule (delay fn)
+  "Run FN after DELAY idle seconds, replacing any pending refresh timer."
+  (when workspace-hud--debounce-timer
+    (cancel-timer workspace-hud--debounce-timer))
+  (setq workspace-hud--debounce-timer
+        (run-with-idle-timer delay nil fn)))
+
+(defun workspace-hud--sync-auto ()
+  "Show the HUD for Git-backed buffers and hide it elsewhere."
+  (when workspace-hud-auto-mode
+    (if workspace-hud--auto-paused
+        (egui-panel-hide)
+      (if (workspace-hud--resolve-root)
+          (progn
+            (workspace-hud--configure-panel)
+            (workspace-hud--setup-triggers)
+            (if (egui-panel-visible-p)
+                (workspace-hud-refresh)
+              (egui-panel-show)))
+        (egui-panel-hide)))))
+
 (defun workspace-hud--on-change (&rest _)
   "Debounced refresh on buffer/window change."
-  (when (egui-panel-visible-p)
-    (when workspace-hud--debounce-timer
-      (cancel-timer workspace-hud--debounce-timer))
-    (setq workspace-hud--debounce-timer
-          (run-with-idle-timer workspace-hud-debounce nil
-                               #'workspace-hud-refresh))))
+  (when (or workspace-hud-auto-mode (egui-panel-visible-p))
+    (workspace-hud--schedule
+     workspace-hud-debounce
+     (if workspace-hud-auto-mode
+         #'workspace-hud--sync-auto
+       #'workspace-hud-refresh))))
 
 (defun workspace-hud--on-save ()
   "Refresh shortly after saving a file."
-  (when (egui-panel-visible-p)
-    (when workspace-hud--debounce-timer
-      (cancel-timer workspace-hud--debounce-timer)
-      (setq workspace-hud--debounce-timer nil))
-    (run-with-idle-timer 0.1 nil #'workspace-hud-refresh)))
+  (when (or workspace-hud-auto-mode (egui-panel-visible-p))
+    (workspace-hud--schedule
+     0.1
+     (if workspace-hud-auto-mode
+         #'workspace-hud--sync-auto
+       #'workspace-hud-refresh))))
 
 (defun workspace-hud--setup-triggers ()
   "Register collection triggers."
@@ -233,20 +272,45 @@ resolve against the parent frame's selected window instead."
 ;; Entry point
 ;; ---------------------------------------------------------------------------
 
+(defun workspace-hud--show-manual ()
+  "Show the workspace HUD with manual trigger ownership."
+  (setq workspace-hud--auto-paused nil)
+  (workspace-hud--configure-panel)
+  (workspace-hud--setup-triggers)
+  (egui-panel-show))
+
+(defun workspace-hud--hide-manual ()
+  "Hide the workspace HUD and release manual trigger ownership."
+  (when workspace-hud-auto-mode
+    (setq workspace-hud--auto-paused t))
+  (egui-panel-hide)
+  (unless workspace-hud-auto-mode
+    (remove-hook 'egui-panel-ready-hook #'workspace-hud-refresh)
+    (workspace-hud--teardown-triggers)))
+
 ;;;###autoload
 (defun workspace-hud-toggle ()
   "Toggle the workspace-status HUD panel."
   (interactive)
   (if (egui-panel-visible-p)
+      (workspace-hud--hide-manual)
+    (workspace-hud--show-manual)))
+
+;;;###autoload
+(define-minor-mode workspace-hud-auto-mode
+  "Automatically show the workspace HUD in Git repos and hide it elsewhere."
+  :global t
+  :group 'workspace-hud
+  (if workspace-hud-auto-mode
       (progn
-        (egui-panel-hide)
-        (workspace-hud--teardown-triggers))
-    (setq egui-panel-width workspace-hud-width
-          egui-panel-height workspace-hud-height
-          egui-panel-asset-dir (workspace-hud--asset-dir))
-    (add-hook 'egui-panel-ready-hook #'workspace-hud-refresh)
-    (workspace-hud--setup-triggers)
-    (egui-panel-show)))
+        (setq workspace-hud--auto-paused nil)
+        (workspace-hud--configure-panel)
+        (workspace-hud--setup-triggers)
+        (workspace-hud--sync-auto))
+    (setq workspace-hud--auto-paused nil)
+    (egui-panel-hide)
+    (remove-hook 'egui-panel-ready-hook #'workspace-hud-refresh)
+    (workspace-hud--teardown-triggers)))
 
 (provide 'workspace-hud)
 ;;; workspace-hud.el ends here

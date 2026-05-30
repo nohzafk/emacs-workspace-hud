@@ -154,5 +154,150 @@
       (should setup)
       (should shown))))
 
+(ert-deftest workspace-hud-test-auto-sync-shows-in-repo ()
+  "Auto mode shows the panel when the selected buffer belongs to a repo."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud-width 301)
+        (workspace-hud-height 211)
+        (egui-panel-width 1)
+        (egui-panel-height 2)
+        (egui-panel-asset-dir nil)
+        (egui-panel-ready-hook nil)
+        shown
+        setup)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda () "/tmp/repo"))
+              ((symbol-function 'egui-panel-visible-p) (lambda () nil))
+              ((symbol-function 'egui-panel-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--setup-triggers)
+               (lambda () (setq setup t))))
+      (workspace-hud--sync-auto)
+      (should (= egui-panel-width workspace-hud-width))
+      (should (= egui-panel-height workspace-hud-height))
+      (should (equal egui-panel-asset-dir (workspace-hud--asset-dir)))
+      (should (memq #'workspace-hud-refresh egui-panel-ready-hook))
+      (should setup)
+      (should shown))))
+
+(ert-deftest workspace-hud-test-auto-sync-refreshes-visible-repo ()
+  "Auto mode refreshes instead of recreating an already visible panel."
+  (let ((workspace-hud-auto-mode t)
+        refreshed
+        shown)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda () "/tmp/repo"))
+              ((symbol-function 'egui-panel-visible-p) (lambda () t))
+              ((symbol-function 'workspace-hud-refresh)
+               (lambda () (setq refreshed t)))
+              ((symbol-function 'egui-panel-show)
+               (lambda () (setq shown t))))
+      (workspace-hud--sync-auto)
+      (should refreshed)
+      (should-not shown))))
+
+(ert-deftest workspace-hud-test-auto-sync-hides-outside-repo ()
+  "Auto mode hides the panel when the selected buffer is outside Git."
+  (let ((workspace-hud-auto-mode t)
+        hidden
+        shown)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda () nil))
+              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'egui-panel-show) (lambda () (setq shown t))))
+      (workspace-hud--sync-auto)
+      (should hidden)
+      (should-not shown))))
+
+(ert-deftest workspace-hud-test-auto-sync-stays-hidden-when-paused ()
+  "Manual off pauses auto mode until the user explicitly turns it back on."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--auto-paused t)
+        hidden
+        shown
+        resolved)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda ()
+                 (setq resolved t)
+                 "/tmp/repo"))
+              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'egui-panel-show) (lambda () (setq shown t))))
+      (workspace-hud--sync-auto)
+      (should hidden)
+      (should-not shown)
+      (should-not resolved))))
+
+(ert-deftest workspace-hud-test-refresh-hides-outside-repo-in-auto-mode ()
+  "Auto refresh hides outside Git instead of pushing placeholder state."
+  (let ((workspace-hud-auto-mode t)
+        hidden
+        pushed
+        themed)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda () nil))
+              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'egui-panel-push-state)
+               (lambda (_state) (setq pushed t)))
+              ((symbol-function 'egui-panel-push-theme)
+               (lambda () (setq themed t))))
+      (workspace-hud-refresh)
+      (should hidden)
+      (should-not pushed)
+      (should-not themed))))
+
+(ert-deftest workspace-hud-test-refresh-hides-when-auto-paused ()
+  "Auto refresh respects a manual pause even in a Git repo."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--auto-paused t)
+        hidden
+        pushed
+        themed)
+    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
+               (lambda () "/tmp/repo"))
+              ((symbol-function 'egui-panel-hide) (lambda () (setq hidden t)))
+              ((symbol-function 'egui-panel-push-state)
+               (lambda (_state) (setq pushed t)))
+              ((symbol-function 'egui-panel-push-theme)
+               (lambda () (setq themed t))))
+      (workspace-hud-refresh)
+      (should hidden)
+      (should-not pushed)
+      (should-not themed))))
+
+(ert-deftest workspace-hud-test-auto-change-schedules-while-hidden ()
+  "Auto mode keeps listening while hidden so it can reappear in Git repos."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'egui-panel-visible-p) (lambda () nil))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer)))
+      (workspace-hud--on-change)
+      (should (eq scheduled #'workspace-hud--sync-auto)))))
+
+(ert-deftest workspace-hud-test-manual-hide-pauses-auto-mode ()
+  "Manual hide prevents auto mode from immediately reopening the HUD."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--auto-paused nil)
+        hidden)
+    (cl-letf (((symbol-function 'egui-panel-hide) (lambda () (setq hidden t))))
+      (workspace-hud--hide-manual)
+      (should hidden)
+      (should workspace-hud--auto-paused))))
+
+(ert-deftest workspace-hud-test-manual-show-clears-auto-pause ()
+  "Manual show re-enables automatic HUD visibility."
+  (let ((workspace-hud--auto-paused t)
+        shown
+        setup)
+    (cl-letf (((symbol-function 'egui-panel-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--setup-triggers)
+               (lambda () (setq setup t))))
+      (workspace-hud--show-manual)
+      (should-not workspace-hud--auto-paused)
+      (should setup)
+      (should shown))))
+
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here
