@@ -31,25 +31,29 @@ Layered on top of the generic [emacs-egui](https://github.com/nohzafk/emacs-egui
 
 The HUD should show **attention-worthy, contextual, actionable info** without becoming a second mode line, buffer list, or full dashboard.
 
-For the current polish pass, the card is organized around two compact sections:
+Out of the box, the card ships two built-in sections:
 
-- **Workspace**: project, branch, upstream state, and dirty working tree summary.
-- **Health**: LSP connection state and diagnostics counts.
+- **Workspace** (priority 10): project name, branch, upstream ahead/behind, and dirty working tree summary (insertions/deletions from staged + unstaged diffs).
+- **Health** (priority 20): LSP connection state (auto-detected from Eglot, lsp-bridge, or lsp-mode) and diagnostic counts (from Flycheck or Flymake).
 
-Test information varies heavily from project to project, so it is intentionally not a first-class section yet. Instead, the HUD should prioritize signals that are commonly useful across most programming workspaces and cheap to collect from Emacs.
+Additional sections can be added dynamically via the [Extension API](#-extension-api--generic-rendering). Sections are sorted by priority (lower numbers appear first).
 
 ## Repository Layout
 
 ```text
 emacs-workspace-hud/
 ├── lisp/
-│   └── workspace-hud.el     # Core package: asset server + child frame lifecycle + Git collection
+│   └── workspace-hud.el     # Core package: child frame lifecycle + Git/LSP collection + extensions
+├── emacs-egui/              # Git submodule: Elisp framework + Rust SDK
+│   ├── lisp/emacs-egui.el   #   HTTP asset server, xwidget session mgmt, JSON IPC bridges
+│   └── sdk/                 #   Rust crate: EguiEmacsApp trait, theme, state push, reverse callbacks
 ├── ui/                      # The egui/WASM status card renderer
-│   ├── src/lib.rs           #   Rust egui app & push bindings
+│   ├── src/lib.rs           #   Rust egui app: generic section/row rendering, icons, status colors
 │   ├── index.html           #   HTML bootstrap shell (exposes JS/WASM bridges)
 │   └── pkg/                 #   Generated WebAssembly bundle (wasm-pack output)
 ├── docs/                    # Architectural guidelines and detailed notes
 ├── tests/                   # ERT test suite covering server, path traversal, Git, and auto modes
+├── justfile                 # Task runner: setup, wasm, test, compile, check, clean
 └── Cargo.toml               # Workspace configuration
 ```
 
@@ -114,23 +118,54 @@ just wasm    # build the UI into ui/pkg/
 
 ## 🚀 Usage
 
-Once installed, you can control the Workspace HUD using two primary interactive commands:
+Once installed, you can control the Workspace HUD with the following interactive commands:
 
-### `M-x workspace-hud-toggle`
-
-Manually show or hide the floating status card anchored to the top-right corner of the active frame. You can bind this command to any key prefix of your choice, for example:
+| Command | Description |
+|---|---|
+| `workspace-hud-toggle` | Show or hide the HUD. When auto-mode is active, hiding via toggle pauses auto-mode until the next manual toggle-on. |
+| `workspace-hud-auto-mode` | Global minor mode. Automatically shows the HUD in Git-backed buffers and hides it elsewhere. |
+| `workspace-hud-show` | Show the HUD (initializes the xwidget session on first call). |
+| `workspace-hud-hide` | Hide the HUD frame without destroying the session. |
+| `workspace-hud-refresh` | Force an immediate data collection and UI push. |
+| `workspace-hud-cleanup` | Fully tear down the frame, xwidget session, file watches, and hooks. Also runs automatically on `kill-emacs-hook`. |
 
 ```elisp
+;; Bind toggle to a key:
 (keymap-set global-map "C-c d h" #'workspace-hud-toggle)
-```
 
-### `M-x workspace-hud-auto-mode`
-
-A global minor mode that manages the HUD's visibility automatically. When enabled, the status card seamlessly appears whenever you enter a file or buffer belonging to a Git repository, and automatically slides out of sight when you focus on non-repository buffers (such as `dired`, `*scratch*`, or help pages).
-
-```elisp
+;; Enable automatic visibility management:
 (workspace-hud-auto-mode 1)
 ```
+
+## Customization
+
+All options live in the `workspace-hud` customize group (`M-x customize-group RET workspace-hud`).
+
+| Variable | Default | Description |
+|---|---|---|
+| `workspace-hud-width` | `260` | Width of the child frame in pixels. |
+| `workspace-hud-min-height` | `150` | Minimum child frame height in pixels. |
+| `workspace-hud-max-height` | `500` | Maximum child frame height in pixels. |
+| `workspace-hud-margin-right` | `19` | Horizontal offset from the right edge of the parent frame. |
+| `workspace-hud-margin-top` | `60` | Vertical offset from the top edge of the parent frame. |
+| `workspace-hud-debounce` | `0.5` | Idle seconds before refreshing after a buffer or window change. |
+| `workspace-hud-surface-background` | `nil` | Optional panel surface color. When `nil`, the default face background is used. |
+
+## Optional Integrations
+
+The HUD detects and integrates with the following packages at runtime -- none are required:
+
+**LSP status** (checked in order of priority):
+- [Eglot](https://github.com/joaotavora/eglot) (built-in from Emacs 29)
+- [lsp-bridge](https://github.com/manateelazycat/lsp-bridge)
+- [lsp-mode](https://github.com/emacs-lsp/lsp-mode)
+
+**Diagnostics** (first available wins):
+- [Flycheck](https://github.com/flycheck/flycheck) (preferred)
+- [Flymake](https://www.gnu.org/software/emacs/manual/html_node/flymake/) (fallback)
+
+**Buffer list filtering**:
+- [Consult](https://github.com/minad/consult) -- the HUD's internal xwidget buffer is automatically added to `consult-buffer-filter` to prevent it from appearing in `consult-buffer`.
 
 ## How It Works (Data Flow)
 
@@ -202,6 +237,18 @@ To remove the section:
 ```elisp
 (workspace-hud-remove-section 'my-extension)
 ```
+
+### Row Schema
+
+Each row is a plist with the following keys:
+
+| Key | Required | Type | Description |
+|---|---|---|---|
+| `:label` | yes | string | Left-side label text. |
+| `:value` | no | string | Right-side display value. Values matching `+N -M` are rendered as colorized diff stats. |
+| `:status` | no | string | Color indicator: `"ok"` (green), `"warn"` (orange), `"error"` (red), `"busy"` (blue), or omit for muted. |
+| `:icon` | no | string | Icon name: `"project"`, `"branch"`, `"changes"`, `"lsp"`, `"diagnostics"`, `"agent"`. |
+| `:detail` | no | string | Additional detail text (reserved for future use). |
 
 ### 📐 Dynamic Height Calculation
 
