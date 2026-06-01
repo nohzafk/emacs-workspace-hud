@@ -116,6 +116,22 @@ just wasm    # build the UI into ui/pkg/
 (workspace-hud-auto-mode 1)
 ```
 
+## 🚀 Usage
+
+Once installed, you can control the Workspace HUD using two primary interactive commands:
+
+### `M-x workspace-hud-toggle`
+Manually show or hide the floating status card anchored to the top-right corner of the active frame. You can bind this command to any key prefix of your choice, for example:
+```elisp
+(keymap-set global-map "C-c d h" #'workspace-hud-toggle)
+```
+
+### `M-x workspace-hud-auto-mode`
+A global minor mode that manages the HUD's visibility automatically. When enabled, the status card seamlessly appears whenever you enter a file or buffer belonging to a Git repository, and automatically slides out of sight when you focus on non-repository buffers (such as `dired`, `*scratch*`, or help pages).
+```elisp
+(workspace-hud-auto-mode 1)
+```
+
 ## How It Works (Data Flow)
 
 ```mermaid
