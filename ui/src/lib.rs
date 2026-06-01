@@ -441,8 +441,7 @@ impl EguiEmacsApp for HudApp {
                     }
 
                     if idx + 1 < len {
-                        ui.add_space(7.0);
-                        soft_separator(ui, separator_color);
+                        ui.add_space(18.0);
                     }
                 }
             });

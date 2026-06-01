@@ -207,7 +207,7 @@ To remove the section:
 
 To prevent screen clipping or scrollbar artifacts, the HUD's child frame height is dynamically calculated in Emacs Lisp on every refresh before repositioning. The panel size is computed using the following layout formula:
 
-$$\text{Height} = 28 + \sum_{i=1}^S (35 + 24 R_i) + 7(S - 1)$$
+$$\text{Height} = 28 + \sum_{i=1}^S (35 + 24 R_i) + 18(S - 1)$$
 
 Where:
 * $S$ is the number of active sections.
@@ -215,7 +215,7 @@ Where:
 * $28\text{ px}$ represents the static top and bottom inner margins ($14 \times 2$).
 * $35\text{ px}$ is the height of a section header plus its separator line and spacing ($22 + 4 + 9$).
 * $24\text{ px}$ is the vertical height of a single row.
-* $7\text{ px}$ is the spacing applied between sections.
+* $18\text{ px}$ is the spacing applied between sections.
 
 The height is automatically clamped to a configurable range:
 - `workspace-hud-min-height` (default `150`)

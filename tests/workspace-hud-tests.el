@@ -181,8 +181,8 @@
       (should (= (length sections) 2))
       (should (equal (cdr (assoc 'title (nth 0 sections))) "Workspace"))
       (should (equal (cdr (assoc 'title (nth 1 sections))) "Health"))
-      ;; Height: 28 + (35 + 24*3) + (35 + 24*2) + 7 = 225
-      (should (= (workspace-hud--compute-height sections) 225)))
+      ;; Height: 28 + (35 + 24*3) + (35 + 24*2) + 18 = 236
+      (should (= (workspace-hud--compute-height sections) 236)))
 
     ;; 2. Register mock custom section
     (workspace-hud-set-section 'mock-agent
@@ -193,20 +193,21 @@
     (let ((sections (workspace-hud--collect-sections nil nil)))
       (should (= (length sections) 3))
       ;; Sorted by priority: Agent (5) < Workspace (10) < Health (20)
+      (should (equal (cdr (assoc 'x nil)) nil))
       (should (equal (cdr (assoc 'title (nth 0 sections))) "Agent"))
       (should (equal (cdr (assoc 'title (nth 1 sections))) "Workspace"))
       (should (equal (cdr (assoc 'title (nth 2 sections))) "Health"))
       
       ;; Rows: Agent has 1, Workspace has 3, Health has 2. Total 6 rows, 3 sections.
-      ;; Height: 28 + (35 + 24*1) + (35 + 24*3) + (35 + 24*2) + 7*2
-      ;;        = 28 + 59 + 107 + 83 + 14 = 291
-      (should (= (workspace-hud--compute-height sections) 291)))
+      ;; Height: 28 + (35 + 24*1) + (35 + 24*3) + (35 + 24*2) + 18*2
+      ;;        = 28 + 59 + 107 + 83 + 36 = 313
+      (should (= (workspace-hud--compute-height sections) 313)))
 
     ;; 3. Remove custom section
     (workspace-hud-remove-section 'mock-agent)
     (let ((sections (workspace-hud--collect-sections nil nil)))
       (should (= (length sections) 2))
-      (should (= (workspace-hud--compute-height sections) 225)))))
+      (should (= (workspace-hud--compute-height sections) 236)))))
 
 
 (ert-deftest workspace-hud-test-lsp-status-detects-clients ()

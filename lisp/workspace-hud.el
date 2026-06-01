@@ -171,7 +171,7 @@ SECTION-DATA is a plist containing:
   "Calculate frame height in pixels for SECTIONS."
   (let* ((s-count (length sections))
          (r-count (cl-reduce #'+ (mapcar (lambda (s) (length (cdr (assoc 'rows s)))) sections) :initial-value 0))
-         (computed (+ 28 (* 35 s-count) (* 24 r-count) (* 7 (max 0 (1- s-count))))))
+         (computed (+ 28 (* 35 s-count) (* 24 r-count) (* 18 (max 0 (1- s-count))))))
     (max workspace-hud-min-height (min workspace-hud-max-height computed))))
 
 (defun workspace-hud--reposition-frame ()
@@ -594,20 +594,24 @@ the selected window in the current frame."
     ;; 1. Core Workspace Section (priority 10)
     (let ((workspace-rows
            (if root
-               (list
-                `((label . ,(file-name-nondirectory root))
-                  (value . "")
-                  (icon . "project"))
-                `((label . ,(workspace-hud--branch root))
-                  (value . ,(workspace-hud--upstream-display root))
-                  (icon . "branch"))
-                `((label . "Dirty")
-                  (value . ,(workspace-hud--changes root))
-                  (icon . "changes")))
+               (let* ((changes (workspace-hud--changes root))
+                      (has-changes (not (member changes '("+0 -0" "0 files"))))
+                      (status (if has-changes "warn" "muted")))
+                 (list
+                  `((label . ,(file-name-nondirectory root))
+                    (value . "")
+                    (icon . "project"))
+                  `((label . ,(workspace-hud--branch root))
+                    (value . ,(workspace-hud--upstream-display root))
+                    (icon . "branch"))
+                  `((label . "Dirty")
+                    (value . ,changes)
+                    (status . ,status)
+                    (icon . "changes"))))
              (list
               `((label . "No project") (value . "") (icon . "project"))
               `((label . "no branch") (value . "") (icon . "branch"))
-              `((label . "Dirty") (value . "+0 -0") (icon . "changes"))))))
+              `((label . "Dirty") (value . "+0 -0") (status . "muted") (icon . "changes"))))))
       (push `((title . "Workspace")
               (priority . 10)
               (rows . ,workspace-rows))
