@@ -38,10 +38,6 @@ For the current polish pass, the card is organized around two compact sections:
 
 Test information varies heavily from project to project, so it is intentionally not a first-class section yet. Instead, the HUD should prioritize signals that are commonly useful across most programming workspaces and cheap to collect from Emacs.
 
-## Why a local HTTP server?
-
-WebKit refuses to instantiate WebAssembly from `file://` origins for security reasons, so the assets must be served over an `http://` origin. Rather than relying on external web daemons, global network listeners, npm, or CDN dependencies, this package runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port. It serves only the HUD's compiled `index.html` and `pkg/` WASM bundle entirely in-process and securely.
-
 ## Repository Layout
 
 ```text
@@ -121,13 +117,17 @@ just wasm    # build the UI into ui/pkg/
 Once installed, you can control the Workspace HUD using two primary interactive commands:
 
 ### `M-x workspace-hud-toggle`
+
 Manually show or hide the floating status card anchored to the top-right corner of the active frame. You can bind this command to any key prefix of your choice, for example:
+
 ```elisp
 (keymap-set global-map "C-c d h" #'workspace-hud-toggle)
 ```
 
 ### `M-x workspace-hud-auto-mode`
+
 A global minor mode that manages the HUD's visibility automatically. When enabled, the status card seamlessly appears whenever you enter a file or buffer belonging to a Git repository, and automatically slides out of sight when you focus on non-repository buffers (such as `dired`, `*scratch*`, or help pages).
+
 ```elisp
 (workspace-hud-auto-mode 1)
 ```
@@ -170,3 +170,7 @@ graph TD
 2. **Theme Bootstrapping**: Emacs reads your current active theme colors (background, foreground, and font heights) and passes them to WebKit via a URL fragment (e.g. `#bg=#0c0c10&fg=#e6ebff`) to guarantee a seamless, zero-flash first paint.
 3. **Data Collection & Real-Time Watching**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics). To keep the display perfectly in sync with external terminal actions (such as `git branch`, `git commit`, `git add`, etc.), Emacs establishes a lightweight, non-recursive background watcher on the repository's `.git/` directory, immediately triggering a debounced status refresh on any commit, branch switch, pull, or staging activity.
 4. **Programmatic Pushes**: Emacs encodes the workspace state plist to JSON and calls the WebKit bridge `window.hudPushState(json)` dynamically. Egui replaces the state model and requests an immediate repaint, redrawing the canvas in microseconds.
+
+## Why a local HTTP server?
+
+WebKit refuses to instantiate WebAssembly from `file://` origins for security reasons, so the assets must be served over an `http://` origin. Rather than relying on external web daemons, global network listeners, npm, or CDN dependencies, this package runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port. It serves only the HUD's compiled `index.html` and `pkg/` WASM bundle entirely in-process and securely.
