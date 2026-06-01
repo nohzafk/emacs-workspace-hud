@@ -74,7 +74,7 @@ git submodule update --init --recursive" egui-dir))
   "Horizontal offset from the right edge of the parent frame, in pixels."
   :type 'integer)
 
-(defcustom workspace-hud-margin-top 60
+(defcustom workspace-hud-margin-top 20
   "Vertical offset from the top edge of the parent frame, in pixels."
   :type 'integer)
 

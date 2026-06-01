@@ -233,23 +233,28 @@ fn hud_row(
         |ui| {
             draw_icon(ui, icon, muted);
             ui.add_space(6.0);
-            ui.label(
+            let left_label = egui::Label::new(
                 egui::RichText::new(label)
                     .family(font_family.clone())
                     .size(text_size)
                     .color(primary),
-            );
+            )
+            .truncate();
+            ui.add(left_label).on_hover_text(label);
+
             if let Some(right) = right {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let right_size = (text_size - 0.4).max(10.0);
                     match right {
                         RowRight::Plain(value, color) => {
-                            ui.label(
+                            let right_label = egui::Label::new(
                                 egui::RichText::new(value)
                                     .family(font_family.clone())
                                     .size(right_size)
                                     .color(color),
-                            );
+                            )
+                            .truncate();
+                            ui.add(right_label).on_hover_text(value);
                         }
                         RowRight::Diff {
                             added,
