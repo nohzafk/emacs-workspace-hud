@@ -62,8 +62,12 @@ git submodule update --init --recursive" egui-dir))
   "Width of the workspace HUD child frame in pixels."
   :type 'integer)
 
-(defcustom workspace-hud-height 230
-  "Height of the workspace HUD child frame in pixels."
+(defcustom workspace-hud-min-height 150
+  "Minimum height of the workspace HUD child frame in pixels."
+  :type 'integer)
+
+(defcustom workspace-hud-max-height 500
+  "Maximum height of the workspace HUD child frame in pixels."
   :type 'integer)
 
 (defcustom workspace-hud-margin-right 19
@@ -107,9 +111,68 @@ renames it back to `workspace-hud-xwidget-buffer-name'.")
 (defvar workspace-hud--file-watch nil
   "Cons cell of (REPO-ROOT . WATCH-DESCRIPTOR) for the currently watched repository.")
 
+(defvar workspace-hud-sections nil
+  "A plist of registered HUD sections.
+Keys are section identifiers (symbols), values are plists containing:
+  :title    (string) The header of the section.
+  :priority (integer) Priority for ordering (lower numbers first).
+  :rows     (list) List of row plists.")
+
+(defvar workspace-hud--calculated-height 230
+  "The current dynamically calculated height of the HUD in pixels.")
+
+;; ---------------------------------------------------------------------------
+;; Extension API
+;; ---------------------------------------------------------------------------
+
+(defun workspace-hud--plist-to-alist (plist)
+  "Convert a nested section or row PLIST to an alist recursively."
+  (cond
+   ((and (listp plist) (keywordp (car plist)))
+    (let (alist)
+      (cl-loop for (k v) on plist by #'cddr do
+               (let* ((k-str (symbol-name k))
+                      (clean-k (if (string-prefix-p ":" k-str)
+                                   (substring k-str 1)
+                                 k-str))
+                      (sym (intern clean-k)))
+                 (push (cons sym (workspace-hud--plist-to-alist v)) alist)))
+      (nreverse alist)))
+   ((listp plist)
+    (mapcar #'workspace-hud--plist-to-alist plist))
+   (t
+    plist)))
+
+(defun workspace-hud-set-section (id section-data)
+  "Register or update the HUD section ID with SECTION-DATA.
+ID is a symbol.
+SECTION-DATA is a plist containing:
+  :title     Title of the section
+  :priority  An integer priority (lower values show first)
+  :rows      A list of row plists:
+             (:label \"...\" :value \"...\" :status \"...\" :detail \"...\" :max-lines N :icon \"...\")"
+  (let ((alist-data (workspace-hud--plist-to-alist section-data)))
+    (setq workspace-hud-sections (plist-put workspace-hud-sections id alist-data)))
+  (when (workspace-hud-visible-p)
+    (workspace-hud-refresh)))
+
+(defun workspace-hud-remove-section (id)
+  "Remove the HUD section ID."
+  (setq workspace-hud-sections (plist-put workspace-hud-sections id nil))
+  (when (workspace-hud-visible-p)
+    (workspace-hud-refresh)))
+
+
 ;; ---------------------------------------------------------------------------
 ;; Child frame management
 ;; ---------------------------------------------------------------------------
+
+(defun workspace-hud--compute-height (sections)
+  "Calculate frame height in pixels for SECTIONS."
+  (let* ((s-count (length sections))
+         (r-count (cl-reduce #'+ (mapcar (lambda (s) (length (cdr (assoc 'rows s)))) sections) :initial-value 0))
+         (computed (+ 28 (* 35 s-count) (* 24 r-count) (* 7 (max 0 (1- s-count))))))
+    (max workspace-hud-min-height (min workspace-hud-max-height computed))))
 
 (defun workspace-hud--reposition-frame ()
   "Lock the panel frame to the top-right corner of the parent frame."
@@ -119,7 +182,8 @@ renames it back to `workspace-hud-xwidget-buffer-name'.")
            (target-x (- parent-w workspace-hud-width workspace-hud-margin-right))
            (target-y workspace-hud-margin-top))
       (set-frame-position workspace-hud--frame target-x target-y)
-      (set-frame-size workspace-hud--frame workspace-hud-width workspace-hud-height t))))
+      (set-frame-size workspace-hud--frame workspace-hud-width workspace-hud--calculated-height t))))
+
 
 (defun workspace-hud--make-frame (parent)
   "Create the undecorated, focus-less child frame anchored to PARENT."
@@ -134,7 +198,7 @@ renames it back to `workspace-hud-xwidget-buffer-name'.")
             (visibility . nil)
             (left . 0) (top . 0)
             (width . ,(/ workspace-hud-width (frame-char-width)))
-            (height . ,(/ workspace-hud-height (frame-char-height)))
+            (height . ,(/ workspace-hud--calculated-height (frame-char-height)))
             (internal-border-width . 0)
             (vertical-scroll-bars . nil)
             (horizontal-scroll-bars . nil)
@@ -515,33 +579,93 @@ the selected window in the current frame."
       (with-current-buffer buf
         (workspace-hud--repo-root)))))
 
+(defun workspace-hud--diagnostics-display (errors warnings notes)
+  "Format diagnostic counts into a short string."
+  (cond
+   ((and (= errors 0) (= warnings 0) (= notes 0)) "0 err")
+   ((and (= errors 0) (= warnings 0)) (format "%d info" notes))
+   ((= errors 0) (format "%d warn" warnings))
+   ((= warnings 0) (format "%d err" errors))
+   (t (format "%dE %dW" errors warnings))))
+
+(defun workspace-hud--collect-sections (root target-buffer)
+  "Collect and sort all visible HUD sections."
+  (let (sections)
+    ;; 1. Core Workspace Section (priority 10)
+    (let ((workspace-rows
+           (if root
+               (list
+                `((label . ,(file-name-nondirectory root))
+                  (value . "")
+                  (icon . "project"))
+                `((label . ,(workspace-hud--branch root))
+                  (value . ,(workspace-hud--upstream-display root))
+                  (icon . "branch"))
+                `((label . "Dirty")
+                  (value . ,(workspace-hud--changes root))
+                  (icon . "changes")))
+             (list
+              `((label . "No project") (value . "") (icon . "project"))
+              `((label . "no branch") (value . "") (icon . "branch"))
+              `((label . "Dirty") (value . "+0 -0") (icon . "changes"))))))
+      (push `((title . "Workspace")
+              (priority . 10)
+              (rows . ,workspace-rows))
+            sections))
+
+    ;; 2. Core Health Section (priority 20)
+    (let* ((health (workspace-hud--health-state target-buffer))
+           (lsp-status (plist-get health :lsp-status))
+           (errors (plist-get health :diagnostic-errors))
+           (warnings (plist-get health :diagnostic-warnings))
+           (notes (plist-get health :diagnostic-notes))
+           (lsp-color (cond
+                       ((string= lsp-status "online") "ok")
+                       ((string= lsp-status "offline") "error")
+                       (t "muted")))
+           (diag-color (cond
+                        ((> errors 0) "error")
+                        ((> warnings 0) "warn")
+                        (t "muted")))
+           (health-rows
+            (list
+             `((label . "LSP")
+               (value . ,lsp-status)
+               (status . ,lsp-color)
+               (icon . "lsp"))
+             `((label . "Diagnostics")
+               (value . ,(workspace-hud--diagnostics-display errors warnings notes))
+               (status . ,diag-color)
+               (icon . "diagnostics")))))
+      (push `((title . "Health")
+              (priority . 20)
+              (rows . ,health-rows))
+            sections))
+
+    ;; 3. Add custom/registered sections
+    (cl-loop for (_id data) on workspace-hud-sections by #'cddr
+             do (when data
+                  (push data sections)))
+
+    ;; 4. Sort sections by priority
+    (sort sections (lambda (a b) (< (cdr (assoc 'priority a)) (cdr (assoc 'priority b)))))))
+
 (defun workspace-hud-refresh ()
   "Collect workspace/git status and push it to the panel."
   (interactive)
   (let* ((target-buffer (workspace-hud--target-buffer))
-         (health (workspace-hud--health-state target-buffer))
          (root (workspace-hud--resolve-root))
          (root (and root (directory-file-name (expand-file-name root))))
-         (state
-          (append
-           (if root
-               (list :branch (workspace-hud--branch root)
-                     :upstream (workspace-hud--upstream-display root)
-                     :changes (workspace-hud--changes root)
-                     :location "Local"
-                     :last-commit (workspace-hud--last-commit root)
-                     :project-name (file-name-nondirectory root)
-                     :project-root root)
-             (list :branch "—" :upstream "" :changes "+0 -0" :location "Local"
-                   :last-commit ""
-                   :project-name "" :project-root ""))
-           health)))
+         (sections (workspace-hud--collect-sections root target-buffer)))
     (workspace-hud--update-watch root)
     (if (and workspace-hud-auto-mode
              (or workspace-hud--auto-paused (not root)))
         (workspace-hud-hide)
+      (setq workspace-hud--calculated-height (workspace-hud--compute-height sections))
+      (workspace-hud--reposition-frame)
       (workspace-hud--push-theme)
-      (workspace-hud--push-state state))))
+      (workspace-hud--push-state (list :sections sections)))))
+
 
 ;; ---------------------------------------------------------------------------
 ;; Event-driven triggers

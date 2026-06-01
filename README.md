@@ -171,6 +171,56 @@ graph TD
 3. **Data Collection & Real-Time Watching**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics). To keep the display perfectly in sync with external terminal actions (such as `git branch`, `git commit`, `git add`, etc.), Emacs establishes a lightweight, non-recursive background watcher on the repository's `.git/` directory, immediately triggering a debounced status refresh on any commit, branch switch, pull, or staging activity.
 4. **Programmatic Pushes**: Emacs encodes the workspace state plist to JSON and calls the WebKit bridge `window.hudPushState(json)` dynamically. Egui replaces the state model and requests an immediate repaint, redrawing the canvas in microseconds.
 
+## 🧩 Extension API & Generic Rendering
+
+`emacs-workspace-hud` supports a fully generic extension API, allowing third-party packages to register custom sections dynamically.
+
+### State & Rendering Pipeline
+
+```mermaid
+graph TD
+    A[Emacs Lisp State Composition] -->|Serializes plist to generic JSON| B(JSON String Payload)
+    B -->|window.hudPushState| C[WASM Central Panel]
+    C -->|Loop & Render| D[Section Header]
+    C -->|Loop & Render| E[Generic Rows]
+    E -->|Diff-Stat Regex Match| F[Custom Colorized Diff Stat]
+    E -->|Status Value Check| G[Status Indicator Label]
+```
+
+To register a dynamic HUD section from an external package:
+
+```elisp
+(workspace-hud-set-section 'my-extension
+  '(:title "My Extension"
+    :priority 30
+    :rows ((:label "Status" :value "active" :status "ok" :icon "project")
+           (:label "Progress" :value "75%" :icon "changes"))))
+```
+
+To remove the section:
+
+```elisp
+(workspace-hud-remove-section 'my-extension)
+```
+
+### 📐 Dynamic Height Calculation
+
+To prevent screen clipping or scrollbar artifacts, the HUD's child frame height is dynamically calculated in Emacs Lisp on every refresh before repositioning. The panel size is computed using the following layout formula:
+
+$$\text{Height} = 28 + \sum_{i=1}^S (35 + 24 R_i) + 7(S - 1)$$
+
+Where:
+* $S$ is the number of active sections.
+* $R_i$ is the number of rows in section $i$.
+* $28\text{ px}$ represents the static top and bottom inner margins ($14 \times 2$).
+* $35\text{ px}$ is the height of a section header plus its separator line and spacing ($22 + 4 + 9$).
+* $24\text{ px}$ is the vertical height of a single row.
+* $7\text{ px}$ is the spacing applied between sections.
+
+The height is automatically clamped to a configurable range:
+- `workspace-hud-min-height` (default `150`)
+- `workspace-hud-max-height` (default `500`)
+
 ## Why a local HTTP server?
 
 WebKit refuses to instantiate WebAssembly from `file://` origins for security reasons, so the assets must be served over an `http://` origin. Rather than relying on external web daemons, global network listeners, npm, or CDN dependencies, this package runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port. It serves only the HUD's compiled `index.html` and `pkg/` WASM bundle entirely in-process and securely.

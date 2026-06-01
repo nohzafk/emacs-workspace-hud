@@ -5,56 +5,37 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HudSection {
+    pub title: String,
+    pub priority: u32,
+    pub rows: Vec<HudRow>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HudRow {
+    pub label: String,
+    pub value: String,
+    pub status: Option<String>,
+    pub detail: Option<String>,
+    #[serde(rename = "max-lines")]
+    pub max_lines: Option<u32>,
+    pub icon: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HudState {
-    #[serde(default = "default_branch")]
-    pub branch: String,
     #[serde(default)]
-    pub upstream: String,
-    #[serde(default)]
-    pub changes: String,
-    #[serde(default)]
-    pub location: String,
-    #[serde(rename = "last-commit", default)]
-    pub last_commit: String,
-    #[serde(rename = "project-name", default)]
-    pub project_name: String,
-    #[serde(rename = "project-root", default)]
-    pub project_root: String,
-    #[serde(rename = "lsp-status", default = "default_lsp_status")]
-    pub lsp_status: String,
-    #[serde(rename = "diagnostic-errors", default)]
-    pub diagnostic_errors: u32,
-    #[serde(rename = "diagnostic-warnings", default)]
-    pub diagnostic_warnings: u32,
-    #[serde(rename = "diagnostic-notes", default)]
-    pub diagnostic_notes: u32,
-}
-
-fn default_branch() -> String {
-    "main".to_string()
-}
-
-fn default_lsp_status() -> String {
-    "n/a".to_string()
+    pub sections: Vec<HudSection>,
 }
 
 impl Default for HudState {
     fn default() -> Self {
         Self {
-            branch: "main".to_string(),
-            upstream: String::new(),
-            changes: "+0 -0".to_string(),
-            location: String::new(),
-            last_commit: String::new(),
-            project_name: String::new(),
-            project_root: String::new(),
-            lsp_status: default_lsp_status(),
-            diagnostic_errors: 0,
-            diagnostic_warnings: 0,
-            diagnostic_notes: 0,
+            sections: Vec::new(),
         }
     }
 }
+
 
 fn luminance(c: egui::Color32) -> u8 {
     ((c.r() as u32 * 299 + c.g() as u32 * 587 + c.b() as u32 * 114) / 1000) as u8
@@ -95,6 +76,7 @@ enum HudIcon {
     Branch,
     Lsp,
     Diagnostics,
+    Agent,
 }
 
 fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
@@ -182,8 +164,34 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
             );
             painter.circle_filled(c, 1.8, color);
         }
+        HudIcon::Agent => {
+            let r = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
+            painter.rect_stroke(r, 1.5, stroke);
+            painter.circle_filled(c, 1.2, color);
+            painter.line_segment([egui::pos2(c.x - 2.0, r.top()), egui::pos2(c.x - 2.0, r.top() - 2.5)], thin);
+            painter.line_segment([egui::pos2(c.x + 2.0, r.top()), egui::pos2(c.x + 2.0, r.top() - 2.5)], thin);
+            painter.line_segment([egui::pos2(c.x - 2.0, r.bottom()), egui::pos2(c.x - 2.0, r.bottom() + 2.5)], thin);
+            painter.line_segment([egui::pos2(c.x + 2.0, r.bottom()), egui::pos2(c.x + 2.0, r.bottom() + 2.5)], thin);
+            painter.line_segment([egui::pos2(r.left(), c.y - 2.0), egui::pos2(r.left() - 2.5, c.y - 2.0)], thin);
+            painter.line_segment([egui::pos2(r.left(), c.y + 2.0), egui::pos2(r.left() - 2.5, c.y + 2.0)], thin);
+            painter.line_segment([egui::pos2(r.right(), c.y - 2.0), egui::pos2(r.right() + 2.5, c.y - 2.0)], thin);
+            painter.line_segment([egui::pos2(r.right(), c.y + 2.0), egui::pos2(r.right() + 2.5, c.y + 2.0)], thin);
+        }
     }
 }
+
+fn map_icon(icon_str: &str) -> HudIcon {
+    match icon_str {
+        "project" => HudIcon::Project,
+        "branch" => HudIcon::Branch,
+        "changes" => HudIcon::Changes,
+        "lsp" => HudIcon::Lsp,
+        "diagnostics" => HudIcon::Diagnostics,
+        "agent" => HudIcon::Agent,
+        _ => HudIcon::Project,
+    }
+}
+
 
 enum RowRight<'a> {
     Plain(&'a str, egui::Color32),
@@ -207,42 +215,7 @@ fn split_diff_stat(value: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn compact_text(value: &str, fallback: &str, max_chars: usize) -> String {
-    let trimmed = value.trim();
-    let display = if trimmed.is_empty() {
-        fallback
-    } else {
-        trimmed
-    };
-    let char_count = display.chars().count();
 
-    if char_count <= max_chars {
-        return display.to_string();
-    }
-
-    if max_chars <= 3 {
-        return ".".repeat(max_chars);
-    }
-
-    let keep = max_chars - 3;
-    let head_len = keep - (keep / 2);
-    let tail_len = keep / 2;
-    let head: String = display.chars().take(head_len).collect();
-    let tail_chars: Vec<char> = display.chars().rev().take(tail_len).collect();
-    let tail: String = tail_chars.into_iter().rev().collect();
-
-    format!("{head}...{tail}")
-}
-
-fn diagnostics_display(errors: u32, warnings: u32, notes: u32) -> String {
-    match (errors, warnings, notes) {
-        (0, 0, 0) => "0 err".to_string(),
-        (0, 0, notes) => format!("{notes} info"),
-        (0, warnings, _) => format!("{warnings} warn"),
-        (errors, 0, _) => format!("{errors} err"),
-        (errors, warnings, _) => format!("{errors}E {warnings}W"),
-    }
-}
 
 fn hud_row(
     ui: &mut egui::Ui,
@@ -414,129 +387,64 @@ impl EguiEmacsApp for HudApp {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                section_header(ui, "Workspace", col_text_muted, text_size, &font_family);
-                soft_separator(ui, separator_color);
+                let len = self.state.sections.len();
+                for (idx, section) in self.state.sections.iter().enumerate() {
+                    section_header(ui, &section.title, col_text_muted, text_size, &font_family);
+                    soft_separator(ui, separator_color);
 
-                let project_display = compact_text(&self.state.project_name, "No project", 24);
-                let location_display = compact_text(&self.state.location, "", 10);
-                hud_row(
-                    ui,
-                    HudIcon::Project,
-                    &project_display,
-                    if location_display.is_empty() {
-                        None
-                    } else {
-                        Some(RowRight::Plain(&location_display, col_text_muted))
-                    },
-                    col_text_primary,
-                    col_text_muted,
-                    text_size,
-                    &font_family,
-                );
+                    for row in &section.rows {
+                        let row_icon = if let Some(ref icon_str) = row.icon {
+                            map_icon(icon_str)
+                        } else {
+                            HudIcon::Project
+                        };
 
-                let branch_display = compact_text(&self.state.branch, "no branch", 22);
-                let upstream_display = compact_text(&self.state.upstream, "", 12);
-                hud_row(
-                    ui,
-                    HudIcon::Branch,
-                    &branch_display,
-                    if upstream_display.is_empty() {
-                        None
-                    } else {
-                        Some(RowRight::Plain(&upstream_display, col_text_primary))
-                    },
-                    col_text_primary,
-                    col_text_muted,
-                    text_size,
-                    &font_family,
-                );
+                        let row_color = match row.status.as_deref() {
+                            Some("ok") => col_green,
+                            Some("warn") => col_orange,
+                            Some("error") => col_red,
+                            Some("busy") => egui::Color32::from_rgb(98, 160, 234),
+                            _ => col_text_muted,
+                        };
 
-                let has_changes = !self.state.changes.is_empty()
-                    && self.state.changes != "0 files"
-                    && self.state.changes != "+0 -0";
-                let changes_display = if self.state.changes.is_empty() {
-                    "0 files".to_string()
-                } else {
-                    self.state.changes.clone()
-                };
-                let changes_color = if has_changes {
-                    col_orange
-                } else {
-                    col_text_muted
-                };
-                let changes_right =
-                    if let Some((added, removed)) = split_diff_stat(&changes_display) {
-                        Some(RowRight::Diff {
-                            added,
-                            removed,
-                            added_color: if added == "+0" {
-                                col_text_muted
-                            } else {
-                                col_green
-                            },
-                            removed_color: if removed == "-0" {
-                                col_text_muted
-                            } else {
-                                col_red
-                            },
-                        })
-                    } else {
-                        Some(RowRight::Plain(&changes_display, changes_color))
-                    };
-                hud_row(
-                    ui,
-                    HudIcon::Changes,
-                    "Dirty",
-                    changes_right,
-                    col_text_primary,
-                    col_text_muted,
-                    text_size,
-                    &font_family,
-                );
+                        let right_content = if let Some((added, removed)) = split_diff_stat(&row.value) {
+                            Some(RowRight::Diff {
+                                added,
+                                removed,
+                                added_color: if added == "+0" {
+                                    col_text_muted
+                                } else {
+                                    col_green
+                                },
+                                removed_color: if removed == "-0" {
+                                    col_text_muted
+                                } else {
+                                    col_red
+                                },
+                            })
+                        } else if !row.value.is_empty() {
+                            Some(RowRight::Plain(&row.value, row_color))
+                        } else {
+                            None
+                        };
 
-                ui.add_space(7.0);
-                soft_separator(ui, separator_color);
-                section_header(ui, "Health", col_text_muted, text_size, &font_family);
+                        hud_row(
+                            ui,
+                            row_icon,
+                            &row.label,
+                            right_content,
+                            col_text_primary,
+                            col_text_muted,
+                            text_size,
+                            &font_family,
+                        );
+                    }
 
-                let lsp_status = compact_text(&self.state.lsp_status, "n/a", 12);
-                let lsp_color = match lsp_status.as_str() {
-                    "online" => col_green,
-                    "offline" => col_red,
-                    _ => col_text_muted,
-                };
-                hud_row(
-                    ui,
-                    HudIcon::Lsp,
-                    "LSP",
-                    Some(RowRight::Plain(&lsp_status, lsp_color)),
-                    col_text_primary,
-                    col_text_muted,
-                    text_size,
-                    &font_family,
-                );
-
-                let diagnostics = diagnostics_display(
-                    self.state.diagnostic_errors,
-                    self.state.diagnostic_warnings,
-                    self.state.diagnostic_notes,
-                );
-                let diagnostics_color = if self.state.diagnostic_errors > 0 {
-                    col_red
-                } else if self.state.diagnostic_warnings > 0 {
-                    col_orange
-                } else {
-                    col_text_muted
-                };
-                hud_row(
-                    ui,
-                    HudIcon::Diagnostics,
-                    "Diagnostics",
-                    Some(RowRight::Plain(&diagnostics, diagnostics_color)),
-                    col_text_primary,
-                    col_text_muted,
-                    text_size,
-                    &font_family,
-                );
+                    if idx + 1 < len {
+                        ui.add_space(7.0);
+                        soft_separator(ui, separator_color);
+                    }
+                }
             });
     }
 }

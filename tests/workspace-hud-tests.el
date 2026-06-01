@@ -155,26 +155,59 @@
       (delete-directory repo t))))
 
 (ert-deftest workspace-hud-test-state-json-shape ()
-  "The pushed state encodes to the JSON the WASM renderer expects."
-  (let* ((state (list :branch "main" :upstream "↑1" :changes "1 file" :location "Local"
-                      :last-commit "abc1234"
-                      :project-name "demo" :project-root "/x/demo"
-                      :lsp-status "online"
-                      :diagnostic-errors 1
-                      :diagnostic-warnings 2
-                      :diagnostic-notes 3))
+  "The pushed state encodes to the JSON the generic WASM renderer expects."
+  (let* ((rows (list '((label . "demo") (value . "Local") (icon . "project"))))
+         (sections (list `((title . "Workspace") (priority . 10) (rows . ,rows))))
+         (state (list :sections sections))
          (json (json-encode state))
          (parsed (let ((json-object-type 'alist)
                        (json-array-type 'list))
                    (json-read-from-string json))))
-    (should (equal (alist-get 'branch parsed) "main"))
-    (should (equal (alist-get 'upstream parsed) "↑1"))
-    ;; Hyphenated keys preserved.
-    (should (equal (alist-get 'last-commit parsed) "abc1234"))
-    (should (equal (alist-get 'lsp-status parsed) "online"))
-    (should (= (alist-get 'diagnostic-errors parsed) 1))
-    (should (= (alist-get 'diagnostic-warnings parsed) 2))
-    (should (= (alist-get 'diagnostic-notes parsed) 3))))
+    (let* ((parsed-sections (alist-get 'sections parsed))
+           (section (car parsed-sections))
+           (parsed-rows (alist-get 'rows section))
+           (row (car parsed-rows)))
+      (should (equal (alist-get 'title section) "Workspace"))
+      (should (= (alist-get 'priority section) 10))
+      (should (equal (alist-get 'label row) "demo"))
+      (should (equal (alist-get 'value row) "Local"))
+      (should (equal (alist-get 'icon row) "project")))))
+
+(ert-deftest workspace-hud-test-dynamic-extension-api ()
+  "Test custom section registration, collection priority sorting, and dynamic height."
+  (let ((workspace-hud-sections nil))
+    ;; 1. Initially only core sections
+    (let ((sections (workspace-hud--collect-sections nil nil)))
+      (should (= (length sections) 2))
+      (should (equal (cdr (assoc 'title (nth 0 sections))) "Workspace"))
+      (should (equal (cdr (assoc 'title (nth 1 sections))) "Health"))
+      ;; Height: 28 + (35 + 24*3) + (35 + 24*2) + 7 = 225
+      (should (= (workspace-hud--compute-height sections) 225)))
+
+    ;; 2. Register mock custom section
+    (workspace-hud-set-section 'mock-agent
+      '(:title "Agent"
+        :priority 5
+        :rows ((:label "Tool" :value "busy" :icon "agent"))))
+
+    (let ((sections (workspace-hud--collect-sections nil nil)))
+      (should (= (length sections) 3))
+      ;; Sorted by priority: Agent (5) < Workspace (10) < Health (20)
+      (should (equal (cdr (assoc 'title (nth 0 sections))) "Agent"))
+      (should (equal (cdr (assoc 'title (nth 1 sections))) "Workspace"))
+      (should (equal (cdr (assoc 'title (nth 2 sections))) "Health"))
+      
+      ;; Rows: Agent has 1, Workspace has 3, Health has 2. Total 6 rows, 3 sections.
+      ;; Height: 28 + (35 + 24*1) + (35 + 24*3) + (35 + 24*2) + 7*2
+      ;;        = 28 + 59 + 107 + 83 + 14 = 291
+      (should (= (workspace-hud--compute-height sections) 291)))
+
+    ;; 3. Remove custom section
+    (workspace-hud-remove-section 'mock-agent)
+    (let ((sections (workspace-hud--collect-sections nil nil)))
+      (should (= (length sections) 2))
+      (should (= (workspace-hud--compute-height sections) 225)))))
+
 
 (ert-deftest workspace-hud-test-lsp-status-detects-clients ()
   (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t)))
