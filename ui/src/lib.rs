@@ -1,20 +1,16 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
+use emacs_egui_sdk::{EguiEmacsApp, ThemeColors, parse_hex_color};
+use emacs_egui_sdk::egui;
+use emacs_egui_sdk::eframe;
 
-lazy_static::lazy_static! {
-    static ref GLOBAL_STATE: Mutex<HudState> = Mutex::new(HudState::default());
-    static ref REPAINT_SIGNAL: Mutex<Option<egui::Context>> = Mutex::new(None);
-    static ref GLOBAL_THEME: Mutex<ThemeColors> = Mutex::new(ThemeColors::default());
-}
-
-#[derive(Default, Serialize, Deserialize, Clone)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
 pub struct UnitInfo {
     pub name: String,
     pub status: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HudState {
     #[serde(default = "default_branch")]
     pub branch: String,
@@ -22,9 +18,9 @@ pub struct HudState {
     pub upstream: String,
     #[serde(default)]
     pub changes: String,
-    #[serde(rename = "mcp-online", default)]
+    #[serde(rename = "mcp-online", default, deserialize_with = "deserialize_bool_flexible")]
     pub mcp_online: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_flexible")]
     pub units: Vec<UnitInfo>,
     #[serde(default)]
     pub location: String,
@@ -56,39 +52,35 @@ impl Default for HudState {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ThemeColors {
-    #[serde(default)]
-    pub bg: String,
-    #[serde(default)]
-    pub fg: String,
-    #[serde(rename = "font-size", default)]
-    pub font_size: Option<f32>,
-    #[serde(rename = "surface-bg", default)]
-    pub surface_bg: String,
-}
-
-impl Default for ThemeColors {
-    fn default() -> Self {
-        Self {
-            bg: "#0c0c10".to_string(),
-            fg: "#e6ebff".to_string(),
-            font_size: None,
-            surface_bg: String::new(),
-        }
+/// Flexible deserializer to handle boolean values that might be serialised as string "true"/"false" by Emacs.
+fn deserialize_bool_flexible<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrString {
+        Bool(bool),
+        Str(String),
+    }
+    match BoolOrString::deserialize(deserializer)? {
+        BoolOrString::Bool(b) => Ok(b),
+        BoolOrString::Str(s) => match s.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(serde::de::Error::custom("expected boolean string")),
+        },
     }
 }
 
-fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() >= 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        Some(egui::Color32::from_rgb(r, g, b))
-    } else {
-        None
-    }
+/// Flexible deserializer to handle arrays that might be serialized as null (Emacs nil for empty list).
+fn deserialize_vec_flexible<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<Vec<T>>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 fn luminance(c: egui::Color32) -> u8 {
@@ -141,7 +133,7 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
     match icon {
         HudIcon::Changes => {
             let r = egui::Rect::from_center_size(c, egui::vec2(13.0, 13.0));
-            painter.rect_stroke(r, 3.0, stroke, egui::StrokeKind::Middle);
+            painter.rect_stroke(r, 3.0, stroke);
             painter.line_segment(
                 [egui::pos2(c.x - 3.8, c.y), egui::pos2(c.x + 3.8, c.y)],
                 thin,
@@ -289,47 +281,36 @@ fn soft_separator(ui: &mut egui::Ui, color: egui::Color32) {
     ui.add_space(9.0);
 }
 
-pub struct HudApp {}
+pub struct HudApp {
+    state: HudState,
+    theme: ThemeColors,
+}
 
 impl HudApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        Self {}
+    pub fn new() -> Self {
+        Self {
+            state: HudState::default(),
+            theme: ThemeColors::default(),
+        }
     }
 }
 
-impl eframe::App for HudApp {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+impl EguiEmacsApp for HudApp {
+    type State = HudState;
+
+    fn on_state_update(&mut self, state: Self::State) {
+        self.state = state;
+    }
+
+    fn on_theme_update(&mut self, theme: ThemeColors) {
+        self.theme = theme;
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Store context for programmatic repaints when state is pushed
-        if let Ok(mut signal) = (*REPAINT_SIGNAL).lock() {
-            if signal.is_none() {
-                *signal = Some(ctx.clone());
-            }
-        }
-
-        let state = {
-            if let Ok(guard) = (*GLOBAL_STATE).lock() {
-                guard.clone()
-            } else {
-                HudState::default()
-            }
-        };
-
-        let theme = {
-            if let Ok(guard) = (*GLOBAL_THEME).lock() {
-                guard.clone()
-            } else {
-                ThemeColors::default()
-            }
-        };
-
-        let bg = parse_hex_color(&theme.bg).unwrap_or(egui::Color32::from_rgb(12, 12, 16));
-        let fg = parse_hex_color(&theme.fg).unwrap_or(egui::Color32::from_rgb(230, 235, 255));
+        let bg = parse_hex_color(&self.theme.bg).unwrap_or(egui::Color32::from_rgb(12, 12, 16));
+        let fg = parse_hex_color(&self.theme.fg).unwrap_or(egui::Color32::from_rgb(230, 235, 255));
         let is_dark = luminance(bg) < 128;
-        let text_size = theme
+        let text_size = self.theme
             .font_size
             .map(|font_size| font_size * 0.76)
             .unwrap_or(12.0)
@@ -349,15 +330,14 @@ impl eframe::App for HudApp {
         let col_green = egui::Color32::from_rgb(85, 166, 99);
         let col_orange = egui::Color32::from_rgb(202, 120, 76);
         let col_red = egui::Color32::from_rgb(198, 88, 94);
-        let card_bg = parse_hex_color(&theme.surface_bg).unwrap_or_else(|| card_fill_from_bg(bg));
+        let card_bg = parse_hex_color(&self.theme.surface_bg).unwrap_or_else(|| card_fill_from_bg(bg));
         let separator_color = if is_dark {
             egui::Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 28)
         } else {
             egui::Color32::from_rgba_unmultiplied(30, 34, 40, 22)
         };
-        // Keep egui itself transparent. xwidget-webkit still supplies an
-        // opaque native backing view on some builds, so the card must fill
-        // the whole web surface instead of relying on transparent gutters.
+
+        // Keep egui itself transparent.
         let mut style = (*ctx.style()).clone();
         style.visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
         style.visuals.window_fill = egui::Color32::TRANSPARENT;
@@ -366,14 +346,14 @@ impl eframe::App for HudApp {
 
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::new()
+                egui::Frame::none()
                     .fill(card_bg)
-                    .corner_radius(egui::CornerRadius::ZERO)
+                    .rounding(egui::Rounding::ZERO)
                     .inner_margin(egui::Margin {
-                        left: 12,
-                        right: 12,
-                        top: 14,
-                        bottom: 14,
+                        left: 12.0,
+                        right: 12.0,
+                        top: 14.0,
+                        bottom: 14.0,
                     })
                     .stroke(egui::Stroke::NONE),
             )
@@ -383,13 +363,13 @@ impl eframe::App for HudApp {
                 section_header(ui, "Environment", col_text_muted, text_size, &font_family);
                 soft_separator(ui, separator_color);
 
-                let has_changes = !state.changes.is_empty()
-                    && state.changes != "0 files"
-                    && state.changes != "+0 -0";
-                let changes_display = if state.changes.is_empty() {
+                let has_changes = !self.state.changes.is_empty()
+                    && self.state.changes != "0 files"
+                    && self.state.changes != "+0 -0";
+                let changes_display = if self.state.changes.is_empty() {
                     "0 files".to_string()
                 } else {
-                    state.changes.clone()
+                    self.state.changes.clone()
                 };
                 let changes_color = if has_changes {
                     col_orange
@@ -429,11 +409,11 @@ impl eframe::App for HudApp {
                 hud_row(
                     ui,
                     HudIcon::Branch,
-                    &state.branch,
-                    if state.upstream.is_empty() {
+                    &self.state.branch,
+                    if self.state.upstream.is_empty() {
                         None
                     } else {
-                        Some(RowRight::Plain(&state.upstream, col_text_primary))
+                        Some(RowRight::Plain(&self.state.upstream, col_text_primary))
                     },
                     col_text_primary,
                     col_text_muted,
@@ -441,10 +421,10 @@ impl eframe::App for HudApp {
                     &font_family,
                 );
 
-                let commit_display = if state.last_commit.is_empty() {
+                let commit_display = if self.state.last_commit.is_empty() {
                     "no commits".to_string()
                 } else {
-                    state.last_commit.clone()
+                    self.state.last_commit.clone()
                 };
                 hud_row(
                     ui,
@@ -462,7 +442,7 @@ impl eframe::App for HudApp {
                 section_header(ui, "Sources", col_text_muted, text_size, &font_family);
 
                 // Config units (if any)
-                let source_status = if state.mcp_online {
+                let source_status = if self.state.mcp_online {
                     Some(("Online", col_green))
                 } else {
                     Some(("Offline", col_red))
@@ -477,8 +457,8 @@ impl eframe::App for HudApp {
                     text_size,
                     &font_family,
                 );
-                if !state.units.is_empty() {
-                    for unit in &state.units {
+                if !self.state.units.is_empty() {
+                    for unit in &self.state.units {
                         let (color, label) = match unit.status.as_str() {
                             "running" => (col_green, "running"),
                             "failed" => (col_red, "failed"),
@@ -502,100 +482,6 @@ impl eframe::App for HudApp {
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn start(_canvas_id: &str) -> Result<(), JsValue> {
-    // Redirect panics to browser console
-    console_error_panic_hook::set_once();
-
-    let web_options = eframe::WebOptions::default();
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .and_then(|win| win.document())
-            .expect("Failed to get document");
-        let canvas = document
-            .get_element_by_id("hud-canvas")
-            .expect("Failed to get canvas")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("Failed to cast to canvas");
-
-        eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(HudApp::new(cc)))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
-
-    Ok(())
-}
-
-/// Fix type mismatches caused by the Emacs Lisp → JSON encoding layer.
-/// Elle boolean `false` arrives as JSON string `"false"` instead of JSON boolean.
-/// Elle empty list `()` arrives as JSON `null` instead of JSON array `[]`.
-fn fixup_sexp_rpc_json(val: &mut serde_json::Value) {
-    if let serde_json::Value::Object(map) = val {
-        // Fix boolean fields that arrive as strings from Emacs json-encode
-        for key in ["mcp-online"] {
-            if let Some(v) = map.get(key).cloned() {
-                if let Some(s) = v.as_str() {
-                    match s {
-                        "true" => {
-                            map.insert(key.to_string(), serde_json::Value::Bool(true));
-                        }
-                        "false" => {
-                            map.insert(key.to_string(), serde_json::Value::Bool(false));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        // Fix array fields that arrive as null (Emacs nil for empty list)
-        for key in ["units"] {
-            if matches!(map.get(key), Some(serde_json::Value::Null)) {
-                map.insert(key.to_string(), serde_json::Value::Array(vec![]));
-            }
-        }
-        // Recurse into array elements (e.g. unit items)
-        for (_, v) in map.iter_mut() {
-            if let serde_json::Value::Array(arr) = v {
-                for item in arr.iter_mut() {
-                    fixup_sexp_rpc_json(item);
-                }
-            }
-        }
-    }
-}
-
-#[wasm_bindgen]
-pub fn push_state(json: &str) {
-    if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(json) {
-        fixup_sexp_rpc_json(&mut val);
-        if let Ok(new_state) = serde_json::from_value::<HudState>(val) {
-            if let Ok(mut guard) = (*GLOBAL_STATE).lock() {
-                *guard = new_state;
-            }
-            // Trigger repaint immediately
-            if let Ok(signal) = (*REPAINT_SIGNAL).lock() {
-                if let Some(ctx) = &*signal {
-                    ctx.request_repaint();
-                }
-            }
-        }
-    }
-}
-
-#[wasm_bindgen]
-pub fn push_theme(json: &str) {
-    if let Ok(new_theme) = serde_json::from_str::<ThemeColors>(json) {
-        if let Ok(mut guard) = (*GLOBAL_THEME).lock() {
-            *guard = new_theme;
-        }
-        if let Ok(signal) = (*REPAINT_SIGNAL).lock() {
-            if let Some(ctx) = &*signal {
-                ctx.request_repaint();
-            }
-        }
-    }
+pub fn start_app(canvas_id: &str) -> Result<(), JsValue> {
+    emacs_egui_sdk::launch_simple(canvas_id, HudApp::new())
 }

@@ -42,7 +42,7 @@ emacs-workspace-hud/
 
 ## Requirements
 
-- Emacs 29.1+ built **with xwidget support** (`(featurep 'xwidget-internal)`).
+- Emacs 29.1+ built **with xwidget support** (`(featurep 'xwidget-internal)`) and standard file notification support (`file-notify`).
 - For status collection: `git` installed on your path.
 - Project automation: [`just`](https://github.com/casey/just) (optional, but highly recommended).
 - To compile the renderer: a Rust toolchain and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
@@ -86,5 +86,5 @@ Enable `workspace-hud-auto-mode` to let Emacs manage visibility automatically. T
 
 1. **Lifecycle Activation**: Calling `workspace-hud-toggle` or changing buffers in auto-mode launches the tiny pure-Elisp HTTP server and maps the xwidget child frame to the top-right corner.
 2. **Theme Bootstrapping**: Emacs reads your current active theme colors (background, foreground, and font heights) and passes them to WebKit via a URL fragment (e.g. `#bg=#0c0c10&fg=#e6ebff`) to guarantee a seamless, zero-flash first paint.
-3. **Data Collection**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics).
+3. **Data Collection & Real-Time Watching**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics). To keep the display perfectly in sync with external terminal actions (such as `git branch`, `git commit`, `git add`, etc.), Emacs establishes a lightweight, non-recursive background watcher on the repository's `.git/` directory, immediately triggering a debounced status refresh on any commit, branch switch, pull, or staging activity.
 4. **Programmatic Pushes**: Emacs encodes the workspace state plist to JSON and calls the WebKit bridge `window.hudPushState(json)` dynamically. Egui replaces the state model and requests an immediate repaint, redrawing the canvas in microseconds.

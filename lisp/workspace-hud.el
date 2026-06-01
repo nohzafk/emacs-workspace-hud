@@ -11,9 +11,8 @@
 ;; in an xwidget-webkit child frame using egui compiled to WebAssembly) to the
 ;; top-right corner of the selected frame.
 ;;
-;; The panel serves assets locally from an in-process, pure Emacs Lisp HTTP
-;; server and populates the status card with git details (branch, changes, last
-;; commit, ahead/behind) and LSP/MCP status for the active project.
+;; It registers as an app with the generic emacs-egui framework to serve WASM/HTML
+;; assets locally and communicates status with git details and LSP/MCP status.
 ;;
 ;; Usage: M-x workspace-hud-toggle
 ;; Or for automatic visibility: M-x workspace-hud-auto-mode
@@ -25,6 +24,34 @@
 (require 'json)
 (require 'url-util)
 (require 'vc-git)
+(require 'filenotify)
+
+(eval-and-compile
+  (defvar workspace-hud--dir
+    (file-name-directory (or load-file-name
+                             (bound-and-true-p byte-compile-current-file)
+                             buffer-file-name
+                             default-directory))
+    "Directory containing workspace-hud lisp files.")
+
+  ;; Ensure emacs-egui is found and loaded.
+  (unless (or (featurep 'emacs-egui)
+              (locate-library "emacs-egui"))
+    (let ((egui-dir (expand-file-name "../emacs-egui/lisp/" workspace-hud--dir)))
+      (unless (file-exists-p (expand-file-name "emacs-egui.el" egui-dir))
+        (error "workspace-hud: emacs-egui not found on `load-path' and \
+no bundled copy under %s. Install emacs-egui, or clone submodules with: \
+git submodule update --init --recursive" egui-dir))
+      (add-to-list 'load-path egui-dir)))
+  (require 'emacs-egui))
+
+;; Version gate
+(when (version< emacs-egui-version "0.1.0")
+  (error "workspace-hud requires emacs-egui >= 0.1.0, found %s" emacs-egui-version))
+
+;; Register UI directory
+(emacs-egui-register-app "workspace-hud"
+                         (expand-file-name "../ui/" workspace-hud--dir))
 
 (defgroup workspace-hud nil
   "Floating workspace HUD rendered in an Emacs child frame."
@@ -67,124 +94,12 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
 (defvar workspace-hud--frame nil)
 (defvar workspace-hud--parent-frame nil)
 (defvar workspace-hud--session nil)
-(defvar workspace-hud--httpd-process nil)
-(defvar workspace-hud--httpd-port nil)
-(defvar workspace-hud--url nil)
-(defvar workspace-hud--dir
-  (file-name-directory (or load-file-name buffer-file-name))
-  "Directory of this file, used to locate the bundled WASM assets.")
 (defvar workspace-hud--debounce-timer nil)
 (defvar workspace-hud-auto-mode nil
   "Non-nil when the workspace HUD manages visibility automatically.")
 (defvar workspace-hud--auto-paused nil)
-
-(defvar workspace-hud-push-state-js "hudPushState"
-  "Name of the JS global the WASM shell exposes for state pushes.")
-
-(defvar workspace-hud-push-theme-js "hudPushTheme"
-  "Name of the JS global the WASM shell exposes for theme pushes.")
-
-;; ---------------------------------------------------------------------------
-;; Local asset HTTP server (pure Elisp)
-;; ---------------------------------------------------------------------------
-
-(defun workspace-hud--asset-dir ()
-  "Locate the asset directory containing index.html and pkg/."
-  (expand-file-name "../renderer/" workspace-hud--dir))
-
-(defun workspace-hud--content-type (file)
-  "Return the HTTP Content-Type for FILE based on its extension."
-  (pcase (downcase (or (file-name-extension file) ""))
-    ("html" "text/html; charset=utf-8")
-    ("js"   "text/javascript; charset=utf-8")
-    ("wasm" "application/wasm")
-    ("json" "application/json; charset=utf-8")
-    ("css"  "text/css; charset=utf-8")
-    (_      "application/octet-stream")))
-
-(defun workspace-hud--read-file-bytes (file)
-  "Return the raw bytes of FILE as a unibyte string."
-  (with-temp-buffer
-    (set-buffer-multibyte nil)
-    (insert-file-contents-literally file)
-    (buffer-string)))
-
-(defun workspace-hud--httpd-send (proc status ctype body)
-  "Send an HTTP response over connection PROC, then half-close it.
-STATUS is a status line like \"200 OK\".  BODY must be a unibyte string."
-  (when (process-live-p proc)
-    (let ((header (encode-coding-string
-                   (format (concat "HTTP/1.1 %s\r\n"
-                                   "Content-Type: %s\r\n"
-                                   "Content-Length: %d\r\n"
-                                   "Access-Control-Allow-Origin: *\r\n"
-                                   "Cache-Control: no-store\r\n"
-                                   "Connection: close\r\n\r\n")
-                           status ctype (length body))
-                   'utf-8)))
-      (process-send-string proc (concat header body))
-      (process-send-eof proc))))
-
-(defun workspace-hud--resolve-asset (path)
-  "Resolve request PATH to a readable file under the asset directory, or nil.
-Strips any query/fragment, maps \"/\" to index.html, and rejects path
-traversal and directories."
-  (let ((asset-dir (workspace-hud--asset-dir)))
-    (when asset-dir
-      (let* ((clean (car (split-string path "[?#]")))
-             (rel (if (member clean '("/" "")) "index.html"
-                    (string-remove-prefix "/" clean)))
-             (base (file-name-as-directory (expand-file-name asset-dir)))
-             (file (expand-file-name rel base)))
-        (and (string-prefix-p base file)  ; reject path traversal
-             (file-readable-p file)
-             (not (file-directory-p file))
-             file)))))
-
-(defun workspace-hud--httpd-respond (proc path)
-  "Serve the file referenced by request PATH over connection PROC."
-  (let ((file (workspace-hud--resolve-asset path)))
-    (if file
-        (workspace-hud--httpd-send proc "200 OK"
-                                (workspace-hud--content-type file)
-                                (workspace-hud--read-file-bytes file))
-      (workspace-hud--httpd-send proc "404 Not Found" "text/plain; charset=utf-8"
-                              (string-to-unibyte "404 Not Found")))))
-
-(defun workspace-hud--httpd-filter (proc chunk)
-  "Accumulate request CHUNK on PROC and respond once headers are complete."
-  (let ((buf (concat (process-get proc :workspace-hud-request) chunk)))
-    (process-put proc :workspace-hud-request buf)
-    (when (string-match "\r\n\r\n" buf)
-      (let* ((request-line (car (split-string buf "\r\n")))
-             (fields (split-string request-line " "))
-             (method (nth 0 fields))
-             (path (or (nth 1 fields) "/")))
-        (process-put proc :workspace-hud-request "")
-        (if (member method '("GET" "HEAD"))
-            (workspace-hud--httpd-respond proc path)
-          (workspace-hud--httpd-send proc "405 Method Not Allowed"
-                                  "text/plain; charset=utf-8"
-                                  (string-to-unibyte "405 Method Not Allowed")))))))
-
-(defun workspace-hud--ensure-httpd ()
-  "Start the local asset server if needed and set `workspace-hud--url'."
-  (unless (and workspace-hud--httpd-process
-               (process-live-p workspace-hud--httpd-process))
-    (setq workspace-hud--httpd-process
-          (make-network-process
-           :name "workspace-hud-httpd"
-           :server t
-           :host 'local
-           :service t
-           :family 'ipv4
-           :coding 'binary
-           :filter #'workspace-hud--httpd-filter
-           :noquery t))
-    (setq workspace-hud--httpd-port
-          (process-contact workspace-hud--httpd-process :service)))
-  (setq workspace-hud--url
-        (format "http://127.0.0.1:%s/index.html" workspace-hud--httpd-port)))
+(defvar workspace-hud--file-watch nil
+  "Cons cell of (REPO-ROOT . WATCH-DESCRIPTOR) for the currently watched repository.")
 
 ;; ---------------------------------------------------------------------------
 ;; Child frame management
@@ -252,71 +167,19 @@ traversal and directories."
 ;; State / theme push
 ;; ---------------------------------------------------------------------------
 
-(defun workspace-hud--url-with-theme ()
-  "Return the panel URL with the current `default' face colors as a fragment.
-The WASM shell reads `#bg=...&fg=...' on load so the first paint matches the
-Emacs theme instead of flashing a default."
-  (let* ((theme (workspace-hud--theme-payload))
-         (bg (plist-get theme :bg))
-         (fg (plist-get theme :fg))
-         (font-size (plist-get theme :font-size))
-         (surface-bg (plist-get theme :surface-bg)))
-    (if (and workspace-hud--url bg fg)
-        (format "%s#bg=%s&fg=%s&font-size=%s&surface-bg=%s"
-                workspace-hud--url
-                (url-hexify-string bg)
-                (url-hexify-string fg)
-                (url-hexify-string (format "%s" (or font-size "")))
-                (url-hexify-string (or surface-bg "")))
-      workspace-hud--url)))
-
-(defun workspace-hud--theme-payload ()
-  "Return current theme data for the renderer."
-  (let* ((bg (face-background 'default nil 'default))
-         (fg (face-foreground 'default nil 'default))
-         (height (face-attribute 'default :height nil 'default))
-         (font-size
-          (cond
-           ((integerp height) (/ height 10.0))
-           ((floatp height)
-            (* height (/ (frame-char-height workspace-hud--parent-frame) 1.0)))
-           (t nil))))
-    (list :bg bg
-          :fg fg
-          :font-size font-size
-          :surface-bg (or workspace-hud-surface-background bg))))
-
 (defun workspace-hud--push-state (state)
-  "Push STATE (a plist or alist) as JSON to the panel renderer."
-  (when (and workspace-hud--session (frame-live-p workspace-hud--frame))
-    (let* ((json-str (json-encode state))
-           (script (format "if (window.%s) { window.%s(%S); }"
-                           workspace-hud-push-state-js
-                           workspace-hud-push-state-js json-str)))
-      (xwidget-webkit-execute-script workspace-hud--session script))))
+  "Push STATE (a plist or alist) as JSON to the panel renderer via emacs-egui."
+  (when workspace-hud--session
+    (emacs-egui-send-state workspace-hud--session state)))
 
 (defun workspace-hud--push-theme ()
-  "Push the current `default' face colors to the panel renderer."
-  (when (and workspace-hud--session (frame-live-p workspace-hud--frame))
-    (let* ((json-str (json-encode (workspace-hud--theme-payload)))
-           (script (format "if (window.%s) { window.%s(%S); }"
-                           workspace-hud-push-theme-js
-                           workspace-hud-push-theme-js json-str)))
-      (xwidget-webkit-execute-script workspace-hud--session script))))
+  "Push the current `default' face colors to the panel renderer via emacs-egui."
+  (when workspace-hud--session
+    (emacs-egui-send-theme workspace-hud--session)))
 
 ;; ---------------------------------------------------------------------------
 ;; Session lifecycle
 ;; ---------------------------------------------------------------------------
-
-(defun workspace-hud--prepare-xwidget-buffer (buf)
-  "Hide BUF from buffer switchers and strip its window chrome."
-  (with-current-buffer buf
-    (rename-buffer workspace-hud-xwidget-buffer-name t)
-    (setq-local mode-line-format nil)
-    (setq-local header-line-format nil)
-    (setq-local display-line-numbers nil)
-    (setq-local left-fringe-width 0)
-    (setq-local right-fringe-width 0)))
 
 (defun workspace-hud--setup-hooks ()
   "Register frame-tracking hooks."
@@ -331,47 +194,26 @@ Emacs theme instead of flashing a default."
   (remove-hook 'kill-emacs-hook #'workspace-hud-cleanup))
 
 (defun workspace-hud--initialize-session ()
-  "Create the child frame and load the WASM panel into an xwidget session."
+  "Create the child frame and load the WASM panel into an xwidget session using emacs-egui."
   (let ((parent (selected-frame)))
-    (unless (featurep 'xwidget-internal)
-      (error "workspace-hud: this Emacs is not built with xwidget support"))
-    (workspace-hud--ensure-httpd)
     (unless (frame-live-p workspace-hud--frame)
       (workspace-hud--make-frame parent)
       (workspace-hud--setup-hooks))
     (make-frame-visible workspace-hud--frame)
     (raise-frame workspace-hud--frame)
-    (with-selected-frame workspace-hud--frame
-      (let* ((window (frame-root-window workspace-hud--frame))
-             (orig-buffer (window-buffer window)))
-        (with-selected-window window
-          (condition-case err
-              (let* ((parent-win-config
-                      (with-selected-frame workspace-hud--parent-frame
-                        (current-window-configuration)))
-                     (child-win-config (current-window-configuration))
-                     (_ (xwidget-webkit-new-session (workspace-hud--url-with-theme)))
-                     (session (xwidget-webkit-current-session))
-                     (buf (xwidget-buffer session)))
-                (with-selected-frame workspace-hud--parent-frame
-                  (set-window-configuration parent-win-config))
-                (set-window-configuration child-win-config)
-                (setq workspace-hud--session session)
-                (workspace-hud--prepare-xwidget-buffer buf)
-                (set-window-buffer window buf)
-                (set-window-dedicated-p window t)
-                (when (and orig-buffer (not (eq orig-buffer buf))
-                           (buffer-live-p orig-buffer)
-                           (string-prefix-p " " (buffer-name orig-buffer)))
-                  (kill-buffer orig-buffer))
-                (run-with-timer 0.5 nil
-                                (lambda ()
-                                  (workspace-hud--push-theme)
-                                  (workspace-hud-refresh)))
-                (message "workspace-hud: panel session ready"))
-            (error
-             (message "workspace-hud: failed to start xwidget session: %S" err)
-             (workspace-hud-cleanup))))))
+    (let* ((session (emacs-egui-create-buffer
+                     :app-name "workspace-hud"
+                     :buffer-name workspace-hud-xwidget-buffer-name))
+           (buf (plist-get session :buffer))
+           (window (frame-root-window workspace-hud--frame)))
+      (setq workspace-hud--session session)
+      (set-window-buffer window buf)
+      (set-window-dedicated-p window t)
+      (run-with-timer 0.5 nil
+                      (lambda ()
+                        (emacs-egui-send-theme session)
+                        (workspace-hud-refresh)))
+      (message "workspace-hud: panel session ready via emacs-egui"))
     (workspace-hud--reposition-frame)))
 
 (defun workspace-hud-show ()
@@ -397,26 +239,21 @@ Emacs theme instead of flashing a default."
        (frame-visible-p workspace-hud--frame)))
 
 (defun workspace-hud-cleanup ()
-  "Tear down the HUD frame, xwidget session, and asset server."
+  "Tear down the HUD frame, xwidget session, and active watchers."
   (interactive)
+  (workspace-hud--update-watch nil)
   (workspace-hud--remove-hooks)
   (when (frame-live-p workspace-hud--frame)
     (delete-frame workspace-hud--frame)
     (setq workspace-hud--frame nil))
   (when workspace-hud--session
-    (let ((buf (ignore-errors (xwidget-buffer workspace-hud--session))))
+    (let ((buf (ignore-errors (plist-get workspace-hud--session :buffer))))
       (when (buffer-live-p buf)
         (let ((kill-buffer-query-functions
                (delq 'xwidget-kill-buffer-query-function
                      kill-buffer-query-functions)))
           (kill-buffer buf))))
-    (setq workspace-hud--session nil))
-  (when (and workspace-hud--httpd-process
-             (process-live-p workspace-hud--httpd-process))
-    (delete-process workspace-hud--httpd-process))
-  (setq workspace-hud--httpd-process nil
-        workspace-hud--httpd-port nil
-        workspace-hud--url nil))
+    (setq workspace-hud--session nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Git collection (via vc-git)
@@ -527,7 +364,7 @@ Emacs theme instead of flashing a default."
 
 (defun workspace-hud--resolve-root ()
   "Resolve the repo root from the buffer the user is actually looking at.
-Refreshes fire from idle timers where `current-buffer' is unpredictable.  When
+Refreshes fire from idle timers where `current-buffer' is unpredictable. When
 the panel has a parent frame, use that frame's selected window; otherwise use
 the selected window in the current frame."
   (let ((buf (if (frame-live-p workspace-hud--parent-frame)
@@ -558,9 +395,10 @@ the selected window in the current frame."
                   :last-commit ""
                   :project-name "" :project-root ""
                   :mcp-online :json-false :units []))))
+    (workspace-hud--update-watch root)
     (if (and workspace-hud-auto-mode
              (or workspace-hud--auto-paused (not root)))
-        (workspace-hud-hide)
+         (workspace-hud-hide)
       (workspace-hud--push-theme)
       (workspace-hud--push-state state))))
 
@@ -574,6 +412,44 @@ the selected window in the current frame."
     (cancel-timer workspace-hud--debounce-timer))
   (setq workspace-hud--debounce-timer
         (run-with-idle-timer delay nil fn)))
+
+(defun workspace-hud--watching-supported-p ()
+  "Return non-nil if Emacs supports file notifications."
+  (and (fboundp 'file-notify-add-watch)
+       (boundp 'file-notify--library)
+       file-notify--library))
+
+(defun workspace-hud--update-watch (root)
+  "Ensure a file watch is active on ROOT's .git directory.
+If ROOT is nil, or if it changes, any existing watch is cleanly removed."
+  (when (workspace-hud--watching-supported-p)
+    (let ((git-dir (and root (expand-file-name ".git" root))))
+      ;; 1. If the repository root changed or is nil, cancel the existing watch
+      (when (and workspace-hud--file-watch
+                 (or (not root)
+                     (not (string= (car workspace-hud--file-watch) root))))
+        (ignore-errors
+          (file-notify-rm-watch (cdr workspace-hud--file-watch)))
+        (setq workspace-hud--file-watch nil))
+      
+      ;; 2. Establish a new watch on the .git directory if none exists
+      (when (and git-dir
+                 (file-directory-p git-dir)
+                 (not workspace-hud--file-watch))
+        (let ((watch-desc
+               (ignore-errors
+                 (file-notify-add-watch
+                  git-dir
+                  '(change)
+                  (lambda (_event)
+                    ;; Trigger a debounced refresh
+                    (workspace-hud--schedule
+                     workspace-hud-debounce
+                     (if workspace-hud-auto-mode
+                         #'workspace-hud--sync-auto
+                       #'workspace-hud-refresh)))))))
+          (when watch-desc
+            (setq workspace-hud--file-watch (cons root watch-desc))))))))
 
 (defun workspace-hud--sync-auto ()
   "Show the HUD for Git-backed buffers and hide it elsewhere."
@@ -619,7 +495,8 @@ the selected window in the current frame."
   (remove-hook 'after-save-hook #'workspace-hud--on-save)
   (when workspace-hud--debounce-timer
     (cancel-timer workspace-hud--debounce-timer)
-    (setq workspace-hud--debounce-timer nil)))
+    (setq workspace-hud--debounce-timer nil))
+  (workspace-hud--update-watch nil))
 
 ;; ---------------------------------------------------------------------------
 ;; Entry point

@@ -30,7 +30,7 @@ setup:
 # Rebuild the demo WASM renderer.
 [group('Build')]
 wasm:
-    cd renderer && wasm-pack build --target web
+    cd ui && wasm-pack build --target web
 
 # Byte-compile the Lisp as a smoke test.
 [group('Test')]
@@ -52,4 +52,4 @@ check: wasm compile test
 [group('Build')]
 clean:
     rm -f lisp/*.elc tests/*.elc
-    rm -rf renderer/target
+    rm -rf ui/target

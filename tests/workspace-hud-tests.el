@@ -3,11 +3,9 @@
 ;;; Commentary:
 
 ;; Unified test suite for the workspace HUD, covering:
-;; 1. HTTP server logic, content-type mapping, binary safety, and path resolution.
-;; 2. Loopback HTTP integration tests for serving the compiled WASM renderer.
-;; 3. Git collector (via vc-git) against mock repositories.
-;; 4. State plist mapping and JSON encoding shapes.
-;; 5. Automated mode visibility controls.
+;; 1. Git collector (via vc-git) against mock repositories.
+;; 2. State plist mapping and JSON encoding shapes.
+;; 3. Automated mode visibility controls.
 ;;
 ;; Run with:
 ;;   emacs -Q --batch -L lisp -L tests -l tests/workspace-hud-tests.el \
@@ -21,140 +19,9 @@
 (require 'workspace-hud)
 
 (defconst workspace-hud-tests--asset-dir
-  (expand-file-name "../renderer/"
+  (expand-file-name "../ui/"
                     (file-name-directory (or load-file-name buffer-file-name)))
   "Asset directory used by the integration test.")
-
-;; ---------------------------------------------------------------------------
-;; HTTP Server & Path Resolution Unit Tests (from egui-panel)
-;; ---------------------------------------------------------------------------
-
-(ert-deftest workspace-hud-test-content-type ()
-  (should (string-prefix-p "text/html"       (workspace-hud--content-type "index.html")))
-  (should (string-prefix-p "text/javascript" (workspace-hud--content-type "x.JS")))
-  (should (equal "application/wasm"          (workspace-hud--content-type "x.wasm")))
-  (should (string-prefix-p "application/json" (workspace-hud--content-type "x.json")))
-  (should (string-prefix-p "text/css"        (workspace-hud--content-type "x.css")))
-  (should (equal "application/octet-stream"  (workspace-hud--content-type "x.bin")))
-  (should (equal "application/octet-stream"  (workspace-hud--content-type "noext"))))
-
-(ert-deftest workspace-hud-test-read-file-bytes-is-binary-safe ()
-  (let ((f (make-temp-file "workspace-hud-bytes")))
-    (unwind-protect
-        (progn
-          (let ((coding-system-for-write 'binary))
-            (with-temp-file f
-              (set-buffer-multibyte nil)
-              (insert (unibyte-string 0 1 2 255 65))))
-          (let ((bytes (workspace-hud--read-file-bytes f)))
-            (should-not (multibyte-string-p bytes))
-            (should (= (length bytes) 5))
-            (should (= (aref bytes 3) 255))
-            (should (= (aref bytes 4) ?A))))
-      (delete-file f))))
-
-(ert-deftest workspace-hud-test-resolve-asset ()
-  (cl-letf (((symbol-function 'workspace-hud--asset-dir)
-             (lambda () workspace-hud-tests--asset-dir)))
-    ;; Valid requests resolve to a file.
-    (should (workspace-hud--resolve-asset "/"))
-    (should (workspace-hud--resolve-asset "/index.html"))
-    (should (workspace-hud--resolve-asset "/index.html?v=1"))   ; query stripped
-    (should (workspace-hud--resolve-asset "/index.html#frag"))  ; fragment stripped
-    ;; Missing files and directories are rejected.
-    (should-not (workspace-hud--resolve-asset "/does-not-exist"))
-    (should-not (workspace-hud--resolve-asset "/pkg"))          ; a directory
-    ;; Path traversal is rejected regardless of how it is spelled.
-    (should-not (workspace-hud--resolve-asset "/../../../etc/passwd"))
-    (should-not (workspace-hud--resolve-asset "/etc/passwd"))))
-
-(ert-deftest workspace-hud-test-url-with-theme ()
-  (cl-letf (((symbol-function 'face-background) (lambda (&rest _) "#112233"))
-            ((symbol-function 'face-foreground) (lambda (&rest _) "#aabbcc"))
-            ((symbol-function 'face-attribute)
-             (lambda (_face attr &rest _)
-               (pcase attr
-                 (:height 150)
-                 (_ nil)))))
-    (let ((workspace-hud--url "http://127.0.0.1:9999/index.html")
-          (workspace-hud-surface-background "#ddeeff"))
-      (let ((u (workspace-hud--url-with-theme)))
-        ;; '#' is hexified to %23 by `url-hexify-string'.
-        (should (string-match-p "#bg=%23112233&fg=%23aabbcc" u))
-        (should (string-match-p "&font-size=15\\.0" u))
-        (should (string-match-p "&surface-bg=%23ddeeff\\'" u))
-        (should (string-prefix-p "http://127.0.0.1:9999/index.html#" u))))))
-
-(ert-deftest workspace-hud-test-prepare-xwidget-buffer-hides-buffer ()
-  (let ((workspace-hud-xwidget-buffer-name
-         (generate-new-buffer-name " *workspace-hud-test-xwidget*")))
-    (with-temp-buffer
-      (workspace-hud--prepare-xwidget-buffer (current-buffer))
-      (should (equal (buffer-name) workspace-hud-xwidget-buffer-name))
-      (should (string-prefix-p " " (buffer-name)))
-      (should-not mode-line-format)
-      (should-not header-line-format)
-      (should-not display-line-numbers)
-      (should (equal left-fringe-width 0))
-      (should (equal right-fringe-width 0)))))
-
-;; ---------------------------------------------------------------------------
-;; Loopback HTTP integration test
-;; ---------------------------------------------------------------------------
-
-(defun workspace-hud-tests--fetch (path)
-  "Fetch PATH from the running test server.
-Return a plist (:status :content-type :content-length)."
-  (let* ((u (format "http://127.0.0.1:%s%s" workspace-hud--httpd-port path))
-         (buf (url-retrieve-synchronously u t t 10)))
-    (unwind-protect
-        (with-current-buffer buf
-          (goto-char (point-min))
-          (let* ((status-line (buffer-substring (point) (line-end-position)))
-                 (code (when (string-match "HTTP/1\\.[01] \\([0-9]+\\)" status-line)
-                         (string-to-number (match-string 1 status-line))))
-                 (ctype (progn (goto-char (point-min))
-                               (when (re-search-forward "^Content-Type: \\(.*\\)" nil t)
-                                 (string-trim (match-string 1)))))
-                 (clen (progn (goto-char (point-min))
-                              (when (re-search-forward "^Content-Length: \\([0-9]+\\)" nil t)
-                                (string-to-number (match-string 1))))))
-            (list :status code :content-type ctype :content-length clen)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
-
-(defun workspace-hud-tests--assert-fetch (path expect-status expect-ctype)
-  "Fetch PATH and assert the status code and Content-Type prefix; return plist."
-  (let ((r (workspace-hud-tests--fetch path)))
-    (should (equal (plist-get r :status) expect-status))
-    (should (string-prefix-p expect-ctype (or (plist-get r :content-type) "")))
-    r))
-
-(ert-deftest workspace-hud-test-httpd-serves-assets ()
-  (skip-unless (file-readable-p
-                (expand-file-name "pkg/workspace_hud_bg.wasm"
-                                  workspace-hud-tests--asset-dir)))
-  (cl-letf (((symbol-function 'workspace-hud--asset-dir)
-             (lambda () workspace-hud-tests--asset-dir)))
-    (unwind-protect
-        (progn
-          (workspace-hud--ensure-httpd)
-          (should (integerp workspace-hud--httpd-port))
-          (workspace-hud-tests--assert-fetch "/" 200 "text/html")
-          (workspace-hud-tests--assert-fetch "/index.html" 200 "text/html")
-          (workspace-hud-tests--assert-fetch "/pkg/workspace_hud.js" 200 "text/javascript")
-          (let* ((wasm-path (expand-file-name "pkg/workspace_hud_bg.wasm"
-                                              workspace-hud-tests--asset-dir))
-                 (r (workspace-hud-tests--assert-fetch "/pkg/workspace_hud_bg.wasm"
-                                                    200 "application/wasm")))
-            ;; Binary served intact: declared length == file size on disk.
-            (should (= (plist-get r :content-length)
-                       (file-attribute-size (file-attributes wasm-path)))))
-          (workspace-hud-tests--assert-fetch "/does-not-exist" 404 "text/plain")
-          (workspace-hud-tests--assert-fetch "/etc/passwd" 404 "text/plain"))
-      (workspace-hud-cleanup))
-    ;; Cleanup tore the listener down.
-    (should-not (and workspace-hud--httpd-process
-                     (process-live-p workspace-hud--httpd-process)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Git collection (via vc-git) against throwaway repos
@@ -188,7 +55,7 @@ Return a plist (:status :content-type :content-length)."
     (should (equal (workspace-hud--branch repo) "main"))
     (should (equal (workspace-hud--changes repo) "+0 -0"))
     (should (string-match-p "\\`[0-9a-f]\\{7,\\}\\'"
-                            (workspace-hud--last-commit repo)))))
+                             (workspace-hud--last-commit repo)))))
 
 (ert-deftest workspace-hud-test-branch-ahead-behind-upstream ()
   (skip-unless (executable-find "git"))
@@ -425,6 +292,76 @@ Return a plist (:status :content-type :content-length)."
       (should-not workspace-hud--auto-paused)
       (should setup)
       (should shown))))
+
+(ert-deftest workspace-hud-test-update-watch-lifecycle ()
+  "Test that `workspace-hud--update-watch' starts, switches, and cancels file watches correctly."
+  (let (added-watches
+        removed-watches
+        (workspace-hud--file-watch nil))
+    (cl-letf (((symbol-function 'workspace-hud--watching-supported-p) (lambda () t))
+              ((symbol-function 'file-directory-p) (lambda (_dir) t))
+              ((symbol-function 'file-notify-add-watch)
+               (lambda (dir _flags _callback)
+                 (let ((desc (make-symbol (concat "watch-desc-" dir))))
+                   (push (cons dir desc) added-watches)
+                   desc)))
+              ((symbol-function 'file-notify-rm-watch)
+               (lambda (desc)
+                 (push desc removed-watches)
+                 t)))
+      ;; 1. Update watch on /tmp/repo-a should add a watch
+      (workspace-hud--update-watch "/tmp/repo-a")
+      (should workspace-hud--file-watch)
+      (should (equal (car workspace-hud--file-watch) "/tmp/repo-a"))
+      (should (= (length added-watches) 1))
+      (should (string-suffix-p ".git" (caar added-watches)))
+      
+      ;; 2. Update watch with same repo shouldn't add another watch
+      (let ((current-desc (cdr workspace-hud--file-watch)))
+        (workspace-hud--update-watch "/tmp/repo-a")
+        (should (eq (cdr workspace-hud--file-watch) current-desc))
+        (should (= (length added-watches) 1)))
+      
+      ;; 3. Update watch with new repo (/tmp/repo-b) should remove old and add new
+      (let ((old-desc (cdr workspace-hud--file-watch)))
+        (workspace-hud--update-watch "/tmp/repo-b")
+        (should (equal (car workspace-hud--file-watch) "/tmp/repo-b"))
+        (should (= (length added-watches) 2))
+        (should (member old-desc removed-watches)))
+      
+      ;; 4. Update watch with nil should remove the watch
+      (let ((latest-desc (cdr workspace-hud--file-watch)))
+        (workspace-hud--update-watch nil)
+        (should-not workspace-hud--file-watch)
+        (should (member latest-desc removed-watches))))))
+
+(ert-deftest workspace-hud-test-cleanup-removes-watch ()
+  "Test that `workspace-hud-cleanup' and `workspace-hud--teardown-triggers' tear down any active watch."
+  (let (removed-watch
+        (workspace-hud--file-watch (cons "/tmp/repo" 'mock-desc)))
+    (cl-letf (((symbol-function 'workspace-hud--watching-supported-p) (lambda () t))
+              ((symbol-function 'file-notify-rm-watch)
+               (lambda (desc)
+                 (setq removed-watch desc)
+                 t))
+              ((symbol-function 'workspace-hud--remove-hooks) (lambda () nil))
+              ((symbol-function 'delete-frame) (lambda (&rest _) nil)))
+      ;; Cleanup should call file-notify-rm-watch
+      (workspace-hud-cleanup)
+      (should-not workspace-hud--file-watch)
+      (should (eq removed-watch 'mock-desc))))
+  
+  (let (removed-watch
+        (workspace-hud--file-watch (cons "/tmp/repo" 'mock-desc)))
+    (cl-letf (((symbol-function 'workspace-hud--watching-supported-p) (lambda () t))
+              ((symbol-function 'file-notify-rm-watch)
+               (lambda (desc)
+                 (setq removed-watch desc)
+                 t)))
+      ;; Teardown triggers should call file-notify-rm-watch
+      (workspace-hud--teardown-triggers)
+      (should-not workspace-hud--file-watch)
+      (should (eq removed-watch 'mock-desc)))))
 
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here

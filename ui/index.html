@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Workspace HUD — emacs-egui framework</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background-color: transparent;
+        }
+        canvas {
+            width: 100%; height: 100%;
+            display: block;
+            background-color: transparent;
+            opacity: 0;
+            transition: opacity 80ms ease-out;
+        }
+        canvas.ready { opacity: 1; }
+    </style>
+</head>
+<body>
+    <canvas id="egui-canvas"></canvas>
+    <script type="module">
+        import init, { start_app, egui_push_state, egui_push_theme }
+            from "./pkg/workspace_hud.js";
+
+        function parseHashParams() {
+            const hash = window.location.hash.replace(/^#/, "");
+            if (!hash) return null;
+            const p = new URLSearchParams(hash);
+            return {
+                bg: p.get("bg"), fg: p.get("fg"),
+                fontSize: p.get("font-size") ? Number(p.get("font-size")) : null,
+                surfaceBg: p.get("surface-bg") || null,
+            };
+        }
+
+        async function run() {
+            const canvas = document.getElementById("egui-canvas");
+            await init();
+            await start_app("egui-canvas");
+
+            // Inject initial theme from URL hash to prevent flash
+            const params = parseHashParams();
+            if (params && params.bg && params.fg) {
+                egui_push_theme(JSON.stringify({
+                    bg: params.bg, fg: params.fg,
+                    "font-size": params.fontSize,
+                    "surface-bg": params.surfaceBg,
+                }));
+            }
+
+            requestAnimationFrame(() => canvas.classList.add("ready"));
+
+            // Expose IPC bindings for the Elisp runtime
+            window.eguiPushState = (json) => { egui_push_state(json); };
+            window.eguiPushTheme = (json) => { egui_push_theme(json); };
+        }
+
+        run();
+    </script>
+</body>
+</html>
