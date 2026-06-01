@@ -11,8 +11,8 @@ Current documentation for the consolidated `emacs-workspace-hud` package and its
 
 The unified codebase consists of the following components:
 
-- [`../lisp/workspace-hud.el`](../lisp/workspace-hud.el): The single core Emacs Lisp package (server, frame, and Git collector).
-- [`../renderer/`](../renderer/): The egui Rust and WASM renderer code.
+- [`../lisp/workspace-hud.el`](../lisp/workspace-hud.el): The single core Emacs Lisp package (server, frame, Git collector, and health collector).
+- [`../ui/`](../ui/): The egui Rust and WASM renderer code.
 - [`../tests/workspace-hud-tests.el`](../tests/workspace-hud-tests.el): The comprehensive unit and integration ERT test suite.
 
 ## Documentation Guidelines

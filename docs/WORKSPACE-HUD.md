@@ -4,12 +4,12 @@ The workspace HUD anchors a gorgeous floating card at the top-right corner of th
 
 ## Features
 
-The HUD dynamically renders a clean dashboard with the following metrics:
-- **Repository Branch**: Resolves your current working branch.
-- **Upstream Divergence**: Displays ahead/behind counts (e.g., `↑2 ↓1`) compared to your configured upstream tracking branch.
-- **Working Tree Changes**: Aggregates insertions and deletions (e.g., `+10 -3`). If changes are untracked-only, binary-only, or file-mode-only, it falls back to a clean changed-file counter (e.g. `2 files`).
-- **Last Commit**: Shows the short hash of the last commit.
-- **Daemons / Sources**: Retains slots for daemon monitoring (such as LSP or Elle MCP status).
+The HUD dynamically renders a clean dashboard with two compact sections:
+
+- **Workspace**: Shows project name, current branch, upstream state, and dirty working tree summary.
+- **Health**: Shows the current buffer's LSP state and diagnostic counts.
+
+The display is intentionally limited to attention-worthy, contextual, actionable info rather than becoming a second mode line, buffer list, or full dashboard.
 
 ## User Configuration
 
@@ -50,6 +50,8 @@ Rather than launching external shell wrappers or keeping daemon processes alive,
 - **Tracked Stats**: `git diff --numstat -- .` and `git diff --cached --numstat -- .`
 - **Untracked fallback**: `git status --porcelain`
 - **Last Commit**: `git rev-parse --short HEAD`
+- **LSP Status**: Detects active Eglot, lsp-mode, or lsp-bridge clients in the viewed buffer.
+- **Diagnostics**: Counts Flycheck diagnostics when Flycheck is active; otherwise counts Flymake diagnostics when available.
 
 ### State Serialization
 
@@ -64,8 +66,10 @@ Emacs serializes collected metrics to the following JSON structure before sendin
   "last-commit": "abc1234",
   "project-name": "emacs-workspace-hud",
   "project-root": "/Users/randall/projects/emacs-workspace-hud",
-  "mcp-online": false,
-  "units": []
+  "lsp-status": "online",
+  "diagnostic-errors": 0,
+  "diagnostic-warnings": 1,
+  "diagnostic-notes": 2
 }
 ```
 
@@ -75,7 +79,7 @@ Building the egui WASM bundle runs entirely through `just`:
 
 ```sh
 just setup   # One-time toolchain setup
-just wasm    # Compiles renderer to /renderer/pkg/
+just wasm    # Compiles renderer to /ui/pkg/
 just test    # Runs HEADLESS Lisp tests
 just check   # Runs wasm build + byte-compile + tests
 ```

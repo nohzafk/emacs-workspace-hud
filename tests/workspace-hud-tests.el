@@ -49,6 +49,32 @@
            ,@body)
        (delete-directory ,var t))))
 
+(defmacro workspace-hud-tests--with-symbol-values (bindings &rest body)
+  "Temporarily bind global symbol-value BINDINGS while running BODY."
+  (declare (indent 1))
+  (let ((saved (make-symbol "saved")))
+    `(let ((,saved
+            (list
+             ,@(mapcar
+                (lambda (binding)
+                  (let ((symbol (car binding)))
+                    `(list ',symbol
+                           (boundp ',symbol)
+                           (and (boundp ',symbol)
+                                (symbol-value ',symbol)))))
+                bindings))))
+       (unwind-protect
+           (progn
+             ,@(mapcar
+                (lambda (binding)
+                  `(set ',(car binding) ,(cadr binding)))
+                bindings)
+             ,@body)
+         (dolist (entry ,saved)
+           (if (cadr entry)
+               (set (car entry) (cl-caddr entry))
+             (makunbound (car entry))))))))
+
 (ert-deftest workspace-hud-test-clean-repo ()
   (skip-unless (executable-find "git"))
   (workspace-hud-tests--with-repo repo
@@ -74,6 +100,9 @@
     (should (equal (workspace-hud--upstream-counts repo) '(1 . 1)))
     (should (equal (workspace-hud--branch repo) "main"))
     (should (equal (workspace-hud--upstream-display repo) "↑1 ↓1"))))
+
+(ert-deftest workspace-hud-test-upstream-synced-display ()
+  (should (equal (workspace-hud--upstream-format '(0 . 0)) "synced")))
 
 (ert-deftest workspace-hud-test-untracked-only-change-count-fallback ()
   (skip-unless (executable-find "git"))
@@ -130,7 +159,10 @@
   (let* ((state (list :branch "main" :upstream "↑1" :changes "1 file" :location "Local"
                       :last-commit "abc1234"
                       :project-name "demo" :project-root "/x/demo"
-                      :mcp-online :json-false :units []))
+                      :lsp-status "online"
+                      :diagnostic-errors 1
+                      :diagnostic-warnings 2
+                      :diagnostic-notes 3))
          (json (json-encode state))
          (parsed (let ((json-object-type 'alist)
                        (json-array-type 'list))
@@ -139,10 +171,45 @@
     (should (equal (alist-get 'upstream parsed) "↑1"))
     ;; Hyphenated keys preserved.
     (should (equal (alist-get 'last-commit parsed) "abc1234"))
-    ;; Booleans encode as real JSON booleans, not strings.
-    (should (eq (alist-get 'mcp-online parsed) :json-false))
-    ;; Empty units encodes as [], not null.
-    (should (string-match-p "\"units\":\\[\\]" json))))
+    (should (equal (alist-get 'lsp-status parsed) "online"))
+    (should (= (alist-get 'diagnostic-errors parsed) 1))
+    (should (= (alist-get 'diagnostic-warnings parsed) 2))
+    (should (= (alist-get 'diagnostic-notes parsed) 3))))
+
+(ert-deftest workspace-hud-test-lsp-status-detects-clients ()
+  (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t)))
+    (should (equal (workspace-hud--lsp-status) "online")))
+  (workspace-hud-tests--with-symbol-values ((lsp-bridge-mode t))
+    (cl-letf (((symbol-function 'lsp-bridge-has-lsp-server-p) (lambda () t)))
+      (should (equal (workspace-hud--lsp-status) "online"))))
+  (workspace-hud-tests--with-symbol-values ((lsp-mode t))
+    (should (equal (workspace-hud--lsp-status) "online"))))
+
+(ert-deftest workspace-hud-test-lsp-status-distinguishes-non-code-buffers ()
+  (with-temp-buffer
+    (text-mode)
+    (should (equal (workspace-hud--lsp-status) "n/a")))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (should (equal (workspace-hud--lsp-status) "offline"))))
+
+(ert-deftest workspace-hud-test-flycheck-diagnostic-counts ()
+  (workspace-hud-tests--with-symbol-values
+      ((flycheck-mode t)
+       (flycheck-current-errors '(error warning info notice)))
+    (cl-letf (((symbol-function 'flycheck-error-level) #'identity))
+      (should (equal (workspace-hud--diagnostic-counts)
+                     '(:errors 1 :warnings 1 :notes 2))))))
+
+(ert-deftest workspace-hud-test-flymake-diagnostic-counts ()
+  (workspace-hud-tests--with-symbol-values
+      ((flycheck-mode nil)
+       (flymake-mode t))
+    (cl-letf (((symbol-function 'flymake-diagnostics)
+               (lambda (&rest _) '(error warning note info)))
+              ((symbol-function 'flymake-diagnostic-type) #'identity))
+      (should (equal (workspace-hud--diagnostic-counts)
+                     '(:errors 1 :warnings 1 :notes 2))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Mode / Visibility Mock Tests

@@ -306,7 +306,7 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
       (push (format "↓%d" behind) parts))
     (if parts
         (mapconcat #'identity (nreverse parts) " ")
-      "")))
+      "synced")))
 
 (defun workspace-hud--status-count (root)
   "Return the number of changed paths in ROOT according to git status."
@@ -359,18 +359,107 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
   (or (workspace-hud--git root "rev-parse" "--short" "HEAD") ""))
 
 ;; ---------------------------------------------------------------------------
+;; Health collection
+;; ---------------------------------------------------------------------------
+
+(defun workspace-hud--lsp-active-p ()
+  "Return non-nil when the current buffer is managed by an LSP client."
+  (or (and (fboundp 'eglot-managed-p)
+           (ignore-errors
+             (funcall (symbol-function 'eglot-managed-p))))
+      (and (fboundp 'eglot-current-server)
+           (ignore-errors
+             (funcall (symbol-function 'eglot-current-server))))
+      (and (bound-and-true-p lsp-bridge-mode)
+           (or (not (fboundp 'lsp-bridge-has-lsp-server-p))
+               (ignore-errors
+                 (funcall (symbol-function 'lsp-bridge-has-lsp-server-p)))))
+      (bound-and-true-p lsp-mode)
+      (bound-and-true-p lsp--buffer-workspaces)))
+
+(defun workspace-hud--lsp-status ()
+  "Return a compact LSP status string for the current buffer."
+  (cond
+   ((workspace-hud--lsp-active-p) "online")
+   ((derived-mode-p 'prog-mode) "offline")
+   (t "n/a")))
+
+(defun workspace-hud--flycheck-diagnostic-counts ()
+  "Return Flycheck diagnostic counts for the current buffer, or nil."
+  (when (and (bound-and-true-p flycheck-mode)
+             (boundp 'flycheck-current-errors)
+             (fboundp 'flycheck-error-level))
+    (let ((errors 0)
+          (warnings 0)
+          (notes 0))
+      (dolist (diagnostic flycheck-current-errors)
+        (pcase (ignore-errors
+                 (funcall (symbol-function 'flycheck-error-level) diagnostic))
+          ('error (cl-incf errors))
+          ('warning (cl-incf warnings))
+          ((or 'info 'notice) (cl-incf notes))))
+      (list :errors errors :warnings warnings :notes notes))))
+
+(defun workspace-hud--flymake-diagnostic-counts ()
+  "Return Flymake diagnostic counts for the current buffer, or nil."
+  (when (and (bound-and-true-p flymake-mode)
+             (fboundp 'flymake-diagnostics)
+             (fboundp 'flymake-diagnostic-type))
+    (let ((errors 0)
+          (warnings 0)
+          (notes 0))
+      (dolist (diagnostic (ignore-errors
+                            (funcall (symbol-function 'flymake-diagnostics)
+                                     (point-min)
+                                     (point-max))))
+        (pcase (ignore-errors
+                 (funcall (symbol-function 'flymake-diagnostic-type) diagnostic))
+          ((or :error 'error) (cl-incf errors))
+          ((or :warning 'warning) (cl-incf warnings))
+          ((or :note :info 'note 'info) (cl-incf notes))))
+      (list :errors errors :warnings warnings :notes notes))))
+
+(defun workspace-hud--diagnostic-counts ()
+  "Return current buffer diagnostic counts as a plist.
+Flycheck is preferred when active because many setups route LSP diagnostics
+through it; otherwise Flymake is used."
+  (or (workspace-hud--flycheck-diagnostic-counts)
+      (workspace-hud--flymake-diagnostic-counts)
+      (list :errors 0 :warnings 0 :notes 0)))
+
+(defun workspace-hud--health-state (&optional buffer)
+  "Return HUD health fields for BUFFER, defaulting to the current buffer."
+  (let ((buf (or buffer (current-buffer))))
+    (if (buffer-live-p buf)
+        (with-current-buffer buf
+          (let ((diagnostics (workspace-hud--diagnostic-counts)))
+            (list :lsp-status (workspace-hud--lsp-status)
+                  :diagnostic-errors (plist-get diagnostics :errors)
+                  :diagnostic-warnings (plist-get diagnostics :warnings)
+                  :diagnostic-notes (plist-get diagnostics :notes))))
+      (list :lsp-status "n/a"
+            :diagnostic-errors 0
+            :diagnostic-warnings 0
+            :diagnostic-notes 0))))
+
+;; ---------------------------------------------------------------------------
 ;; Collect + push
 ;; ---------------------------------------------------------------------------
+
+(defun workspace-hud--target-buffer ()
+  "Return the buffer the user is actually looking at."
+  (let ((window (if (frame-live-p workspace-hud--parent-frame)
+                    (frame-selected-window workspace-hud--parent-frame)
+                  (selected-window))))
+    (when (window-live-p window)
+      (window-buffer window))))
 
 (defun workspace-hud--resolve-root ()
   "Resolve the repo root from the buffer the user is actually looking at.
 Refreshes fire from idle timers where `current-buffer' is unpredictable. When
 the panel has a parent frame, use that frame's selected window; otherwise use
 the selected window in the current frame."
-  (let ((buf (if (frame-live-p workspace-hud--parent-frame)
-                 (window-buffer
-                  (frame-selected-window workspace-hud--parent-frame))
-               (window-buffer (selected-window)))))
+  (let ((buf (workspace-hud--target-buffer)))
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (workspace-hud--repo-root)))))
@@ -378,27 +467,28 @@ the selected window in the current frame."
 (defun workspace-hud-refresh ()
   "Collect workspace/git status and push it to the panel."
   (interactive)
-  (let* ((root (workspace-hud--resolve-root))
+  (let* ((target-buffer (workspace-hud--target-buffer))
+         (health (workspace-hud--health-state target-buffer))
+         (root (workspace-hud--resolve-root))
          (root (and root (directory-file-name (expand-file-name root))))
          (state
-          (if root
-              (list :branch (workspace-hud--branch root)
-                    :upstream (workspace-hud--upstream-display root)
-                    :changes (workspace-hud--changes root)
-                    :location "Local"
-                    :last-commit (workspace-hud--last-commit root)
-                    :project-name (file-name-nondirectory root)
-                    :project-root root
-                    :mcp-online :json-false
-                    :units [])
-            (list :branch "—" :upstream "" :changes "+0 -0" :location "Local"
-                  :last-commit ""
-                  :project-name "" :project-root ""
-                  :mcp-online :json-false :units []))))
+          (append
+           (if root
+               (list :branch (workspace-hud--branch root)
+                     :upstream (workspace-hud--upstream-display root)
+                     :changes (workspace-hud--changes root)
+                     :location "Local"
+                     :last-commit (workspace-hud--last-commit root)
+                     :project-name (file-name-nondirectory root)
+                     :project-root root)
+             (list :branch "—" :upstream "" :changes "+0 -0" :location "Local"
+                   :last-commit ""
+                   :project-name "" :project-root ""))
+           health)))
     (workspace-hud--update-watch root)
     (if (and workspace-hud-auto-mode
              (or workspace-hud--auto-paused (not root)))
-         (workspace-hud-hide)
+        (workspace-hud-hide)
       (workspace-hud--push-theme)
       (workspace-hud--push-state state))))
 

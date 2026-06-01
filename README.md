@@ -8,18 +8,30 @@ It renders a gorgeous floating status card anchored to the top-right corner of y
   +----------------------------------------------------+
   | Emacs Window                                 [HUD] |
   |                                 +----------------+ |
-  |                                 | ENVIRONMENT    | |
-  |                                 | Changes  +0 -0 | |
+  |                                 | WORKSPACE      | |
+  |                                 | project        | |
   |                                 | main    up-to  | |
-  |                                 | abc1234        | |
+  |                                 | dirty   +0 -0  | |
   |                                 |                | |
-  |                                 | SOURCES        | |
-  |                                 | Elle MCP Online| |
+  |                                 | HEALTH         | |
+  |                                 | LSP     online | |
+  |                                 | Diag    0 err  | |
   |                                 +----------------+ |
   |                                                    |
   |                                                    |
   +----------------------------------------------------+
 ```
+
+## Information Model
+
+The HUD should show **attention-worthy, contextual, actionable info** without becoming a second mode line, buffer list, or full dashboard.
+
+For the current polish pass, the card is organized around two compact sections:
+
+- **Workspace**: project, branch, upstream state, and dirty working tree summary.
+- **Health**: LSP connection state and diagnostics counts.
+
+Test information varies heavily from project to project, so it is intentionally not a first-class section yet. Instead, the HUD should prioritize signals that are commonly useful across most programming workspaces and cheap to collect from Emacs.
 
 ## Why a local HTTP server?
 
@@ -31,7 +43,7 @@ WebKit refuses to instantiate WebAssembly from `file://` origins for security re
 emacs-workspace-hud/
 ├── lisp/
 │   └── workspace-hud.el     # Core package: asset server + child frame lifecycle + Git collection
-├── renderer/                # The egui/WASM status card renderer
+├── ui/                      # The egui/WASM status card renderer
 │   ├── src/lib.rs           #   Rust egui app & push bindings
 │   ├── index.html           #   HTML bootstrap shell (exposes JS/WASM bridges)
 │   └── pkg/                 #   Generated WebAssembly bundle (wasm-pack output)
@@ -58,9 +70,9 @@ just wasm    # Compiles the Rust renderer into WebAssembly assets
 
 If you do not have `just`, you can compile manually:
 ```sh
-cd renderer && wasm-pack build --target web
+cd ui && wasm-pack build --target web
 ```
-This generates the WebAssembly binaries and JS binders inside `renderer/pkg/`.
+This generates the WebAssembly binaries and JS binders inside `ui/pkg/`.
 
 ## Running the HUD
 
