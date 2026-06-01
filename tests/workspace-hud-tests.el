@@ -215,6 +215,28 @@
 ;; Mode / Visibility Mock Tests
 ;; ---------------------------------------------------------------------------
 
+(ert-deftest workspace-hud-test-xwidget-buffer-marked-internal ()
+  "The HUD xwidget buffer is hidden and skipped by normal buffer cycling."
+  (let ((workspace-hud-xwidget-buffer-name " *workspace-hud-xwidget*"))
+    (with-temp-buffer
+      (rename-buffer "*xwidget-webkit: Workspace HUD — emacs-egui framework*" t)
+      (workspace-hud--mark-xwidget-buffer-internal (current-buffer))
+      (should (equal (buffer-name) workspace-hud-xwidget-buffer-name))
+      (should-not mode-line-format)
+      (should-not header-line-format)
+      (should-not display-line-numbers)
+      (should switch-to-prev-buffer-skip))))
+
+(ert-deftest workspace-hud-test-consult-filter-excludes-xwidget-buffers ()
+  "Consult should not offer HUD xwidget buffers as switch targets."
+  (let ((workspace-hud-xwidget-buffer-name " *workspace-hud-xwidget*"))
+    (workspace-hud-tests--with-symbol-values ((consult-buffer-filter nil))
+      (workspace-hud--install-consult-buffer-filter)
+      (should (member "\\` \\*workspace-hud-xwidget\\*\\'"
+                      (symbol-value 'consult-buffer-filter)))
+      (should (member workspace-hud--xwidget-title-buffer-regexp
+                      (symbol-value 'consult-buffer-filter))))))
+
 (ert-deftest workspace-hud-test-toggle-shows-manual ()
   (let (shown setup)
     (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))

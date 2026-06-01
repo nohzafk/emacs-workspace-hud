@@ -86,9 +86,15 @@ When nil, the current `default' face background is used."
 
 (defcustom workspace-hud-xwidget-buffer-name " *workspace-hud-xwidget*"
   "Name for the internal xwidget buffer.
-The leading space follows Emacs' hidden-buffer convention, keeping the panel's
-xwidget buffer out of normal buffer switchers such as `consult-buffer'."
+The leading space follows Emacs' hidden-buffer convention, while the surrounding
+stars keep the buffer classified with special/internal buffers."
   :type 'string)
+
+(defconst workspace-hud--xwidget-title-buffer-regexp
+  "\\`\\*xwidget-webkit: Workspace HUD\\(?: .*\\)?\\*\\'"
+  "Regexp matching transient WebKit title buffers for the HUD.
+WebKit can briefly rename the xwidget buffer from the page title before the HUD
+renames it back to `workspace-hud-xwidget-buffer-name'.")
 
 ;; Internal state.
 (defvar workspace-hud--frame nil)
@@ -177,6 +183,47 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
   (when workspace-hud--session
     (emacs-egui-send-theme workspace-hud--session)))
 
+(defun workspace-hud--consult-buffer-filter-regexps ()
+  "Return consult-buffer regexps for HUD xwidget buffers."
+  (list (concat "\\`" (regexp-quote workspace-hud-xwidget-buffer-name) "\\'")
+        workspace-hud--xwidget-title-buffer-regexp))
+
+(defun workspace-hud--install-consult-buffer-filter ()
+  "Exclude HUD xwidget buffers from `consult-buffer' when Consult is loaded.
+Selecting an xwidget buffer into another window can signal
+\"You can't share an xwidget (webkit2) among windows.\""
+  (when (boundp 'consult-buffer-filter)
+    (dolist (regexp (workspace-hud--consult-buffer-filter-regexps))
+      (add-to-list 'consult-buffer-filter regexp))))
+
+(with-eval-after-load 'consult
+  (workspace-hud--install-consult-buffer-filter))
+
+(defun workspace-hud--mark-xwidget-buffer-internal (buffer)
+  "Mark BUFFER as the HUD's hidden internal xwidget buffer."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      ;; WebKit can rename the xwidget buffer from the page title after the
+      ;; session starts; keep the HUD buffer in Emacs' hidden-buffer namespace.
+      (unless (string= (buffer-name) workspace-hud-xwidget-buffer-name)
+        (rename-buffer workspace-hud-xwidget-buffer-name t))
+      (setq-local mode-line-format nil)
+      (setq-local header-line-format nil)
+      (setq-local display-line-numbers nil)
+      (setq-local switch-to-prev-buffer-skip t))
+    buffer))
+
+(defun workspace-hud--on-xwidget-title-change (&rest args)
+  "Re-hide the HUD xwidget buffer after WebKit title changes."
+  (let ((xwidget (cl-find-if (lambda (arg)
+                               (ignore-errors (xwidget-live-p arg)))
+                             args)))
+    (when (and xwidget
+               workspace-hud--session
+               (eq xwidget (plist-get workspace-hud--session :xwidget)))
+      (workspace-hud--mark-xwidget-buffer-internal
+       (plist-get workspace-hud--session :buffer)))))
+
 ;; ---------------------------------------------------------------------------
 ;; Session lifecycle
 ;; ---------------------------------------------------------------------------
@@ -184,12 +231,14 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
 (defun workspace-hud--setup-hooks ()
   "Register frame-tracking hooks."
   (add-hook 'window-size-change-functions #'workspace-hud--on-parent-resize)
+  (add-hook 'xwidget-webkit-title-change-hook #'workspace-hud--on-xwidget-title-change)
   (add-function :after after-focus-change-function #'workspace-hud--on-focus-change)
   (add-hook 'kill-emacs-hook #'workspace-hud-cleanup))
 
 (defun workspace-hud--remove-hooks ()
   "Tear down frame-tracking hooks."
   (remove-hook 'window-size-change-functions #'workspace-hud--on-parent-resize)
+  (remove-hook 'xwidget-webkit-title-change-hook #'workspace-hud--on-xwidget-title-change)
   (remove-function after-focus-change-function #'workspace-hud--on-focus-change)
   (remove-hook 'kill-emacs-hook #'workspace-hud-cleanup))
 
@@ -201,12 +250,14 @@ xwidget buffer out of normal buffer switchers such as `consult-buffer'."
       (workspace-hud--setup-hooks))
     (make-frame-visible workspace-hud--frame)
     (raise-frame workspace-hud--frame)
+    (workspace-hud--install-consult-buffer-filter)
     (let* ((session (emacs-egui-create-buffer
                      :app-name "workspace-hud"
                      :buffer-name workspace-hud-xwidget-buffer-name))
            (buf (plist-get session :buffer))
            (window (frame-root-window workspace-hud--frame)))
       (setq workspace-hud--session session)
+      (workspace-hud--mark-xwidget-buffer-internal buf)
       (set-window-buffer window buf)
       (set-window-dedicated-p window t)
       (run-with-timer 0.5 nil
