@@ -14,13 +14,13 @@ Layered on top of the generic [emacs-egui](https://github.com/nohzafk/emacs-egui
   | Emacs Window                                 [HUD] |
   |                                 +----------------+ |
   |                                 | WORKSPACE      | |
-  |                                 | project        | |
-  |                                 | main    up-to  | |
-  |                                 | dirty   +0 -0  | |
+  |                                 | ▫ myproject    | |
+  |                                 | ⑂ main  synced | |
+  |                                 | ◫ dirty  +3 -1 | |
   |                                 |                | |
   |                                 | HEALTH         | |
-  |                                 | LSP     online | |
-  |                                 | Diag    0 err  | |
+  |                                 | ⬡ LSP   online | |
+  |                                 | ◇ Diag  1E 2W  | |
   |                                 +----------------+ |
   |                                                    |
   |                                                    |
@@ -147,7 +147,7 @@ All options live in the `workspace-hud` customize group (`M-x customize-group RE
 | `workspace-hud-min-height` | `150` | Minimum child frame height in pixels. |
 | `workspace-hud-max-height` | `500` | Maximum child frame height in pixels. |
 | `workspace-hud-margin-right` | `19` | Horizontal offset from the right edge of the parent frame. |
-| `workspace-hud-margin-top` | `60` | Vertical offset from the top edge of the parent frame. |
+| `workspace-hud-margin-top` | `20` | Vertical offset from the top edge of the parent frame. |
 | `workspace-hud-debounce` | `0.5` | Idle seconds before refreshing after a buffer or window change. |
 | `workspace-hud-surface-background` | `nil` | Optional panel surface color. When `nil`, the default face background is used. |
 
@@ -250,8 +250,22 @@ Each row is a plist with the following keys:
 | `:label` | yes | string | Left-side label text. |
 | `:value` | no | string | Right-side display value. Values matching `+N -M` are rendered as colorized diff stats. |
 | `:status` | no | string | Color indicator: `"ok"` (green), `"warn"` (orange), `"error"` (red), `"busy"` (blue), or omit for muted. |
-| `:icon` | no | string | Icon name: `"project"`, `"branch"`, `"changes"`, `"lsp"`, `"diagnostics"`, `"agent"`. |
+| `:icon` | no | string | Icon name (see [Icon Reference](#icon-reference) below). |
 | `:detail` | no | string | Additional detail text (reserved for future use). |
+| `:max-lines` | no | integer | Maximum number of lines to render for multi-line values (reserved for future use). |
+
+### Icon Reference
+
+| Icon name | Visual | Description |
+|---|---|---|
+| `"project"` | Document outline | Project/folder identity. |
+| `"branch"` | Three-node branch graph | Git branch. |
+| `"changes"` | Overlapping squares | Diffs / dirty file changes. |
+| `"lsp"` | Three-node network graph | LSP connection state. |
+| `"diagnostics"` | Diamond with center dot | Errors, warnings, notes. |
+| `"agent"` | IC-chip with pins | AI agent / external process. |
+| `"clock"` | Circle with hands | Timing / duration. |
+| `"dot"` | Small filled circle | **Sub-row indicator.** Rows using this icon render in a compact sub-row layout: 18 px height (vs 22 px), indented, smaller font, and muted label color. Use it for hierarchical detail beneath a parent row. |
 
 ### 📐 Dynamic Height Calculation
 
@@ -272,6 +286,27 @@ The height is automatically clamped to a configurable range:
 
 - `workspace-hud-min-height` (default `150`)
 - `workspace-hud-max-height` (default `500`)
+
+## 🧪 Development
+
+The project uses [`just`](https://github.com/casey/just) as a task runner:
+
+| Command | Description |
+|---|---|
+| `just setup` | Install the `wasm32-unknown-unknown` target and `wasm-pack`. |
+| `just wasm` | Rebuild the WASM renderer into `ui/pkg/`. |
+| `just compile` | Byte-compile the Elisp as a smoke test. |
+| `just test` | Run the ERT test suite headless. |
+| `just check` | Build + compile + test in sequence. |
+| `just clean` | Remove compiled artifacts. |
+
+Without `just`, run tests directly:
+
+```sh
+emacs -Q --batch -L lisp -L tests \
+  -l tests/workspace-hud-tests.el \
+  -f ert-run-tests-batch-and-exit
+```
 
 ## Why a local HTTP server?
 
