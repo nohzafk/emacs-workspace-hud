@@ -69,7 +69,7 @@ fn light_card_muted_text() -> egui::Color32 {
     egui::Color32::from_rgb(146, 149, 154)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum HudIcon {
     Project,
     Changes,
@@ -77,13 +77,15 @@ enum HudIcon {
     Lsp,
     Diagnostics,
     Agent,
+    Clock,
+    Dot,
 }
 
 fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
     let painter = ui.painter();
-    let stroke = egui::Stroke::new(1.7, color);
-    let thin = egui::Stroke::new(1.35, color);
+    let stroke = egui::Stroke::new(1.2, color);
+    let thin = egui::Stroke::new(0.9, color);
     let c = rect.center();
 
     match icon {
@@ -92,26 +94,23 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
                 egui::pos2(rect.left() + 3.0, rect.top() + 4.5),
                 egui::pos2(rect.right() - 3.0, rect.bottom() - 3.5),
             );
-            painter.rect_stroke(r, 2.5, stroke);
+            painter.rect_stroke(r, 1.5, stroke);
             painter.line_segment(
                 [
-                    egui::pos2(r.left() + 2.0, r.top() + 3.5),
-                    egui::pos2(r.right() - 2.0, r.top() + 3.5),
+                    egui::pos2(r.left() + 2.0, r.top() + 3.0),
+                    egui::pos2(r.right() - 2.0, r.top() + 3.0),
                 ],
                 thin,
             );
         }
         HudIcon::Changes => {
-            let r = egui::Rect::from_center_size(c, egui::vec2(13.0, 13.0));
-            painter.rect_stroke(r, 3.0, stroke);
-            painter.line_segment(
-                [egui::pos2(c.x - 3.8, c.y), egui::pos2(c.x + 3.8, c.y)],
-                thin,
-            );
-            painter.line_segment(
-                [egui::pos2(c.x, c.y - 3.8), egui::pos2(c.x, c.y + 3.8)],
-                thin,
-            );
+            // Minimal overlapping squares to represent diffs/changes
+            let r1 = egui::Rect::from_center_size(egui::pos2(c.x - 2.0, c.y - 2.0), egui::vec2(7.5, 7.5));
+            let r2 = egui::Rect::from_center_size(egui::pos2(c.x + 2.0, c.y + 2.0), egui::vec2(7.5, 7.5));
+            painter.rect_stroke(r1, 1.0, thin);
+            // Clear the overlapping background area under r2
+            painter.rect_filled(r2, 1.0, ui.visuals().window_fill());
+            painter.rect_stroke(r2, 1.0, stroke);
         }
         HudIcon::Branch => {
             let left_top = egui::pos2(rect.left() + 5.0, rect.top() + 4.5);
@@ -119,9 +118,9 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
             let right_mid = egui::pos2(rect.right() - 4.5, c.y);
             painter.line_segment([left_top, left_bottom], thin);
             painter.line_segment([left_top, right_mid], thin);
-            painter.circle_stroke(left_top, 2.2, stroke);
-            painter.circle_stroke(left_bottom, 2.2, stroke);
-            painter.circle_stroke(right_mid, 2.2, stroke);
+            painter.circle_stroke(left_top, 1.5, stroke);
+            painter.circle_stroke(left_bottom, 1.5, stroke);
+            painter.circle_stroke(right_mid, 1.5, stroke);
         }
         HudIcon::Lsp => {
             let a = egui::pos2(rect.left() + 5.0, rect.top() + 5.0);
@@ -129,9 +128,9 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
             let d = egui::pos2(rect.left() + 5.0, rect.bottom() - 5.0);
             painter.line_segment([a, b], thin);
             painter.line_segment([d, b], thin);
-            painter.circle_stroke(a, 2.5, stroke);
-            painter.circle_stroke(b, 2.5, stroke);
-            painter.circle_stroke(d, 2.5, stroke);
+            painter.circle_stroke(a, 1.5, stroke);
+            painter.circle_stroke(b, 1.5, stroke);
+            painter.circle_stroke(d, 1.5, stroke);
         }
         HudIcon::Diagnostics => {
             painter.line_segment(
@@ -162,12 +161,12 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
                 ],
                 thin,
             );
-            painter.circle_filled(c, 1.8, color);
+            painter.circle_filled(c, 1.2, color);
         }
         HudIcon::Agent => {
             let r = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
-            painter.rect_stroke(r, 1.5, stroke);
-            painter.circle_filled(c, 1.2, color);
+            painter.rect_stroke(r, 1.0, stroke);
+            painter.circle_filled(c, 1.0, color);
             painter.line_segment([egui::pos2(c.x - 2.0, r.top()), egui::pos2(c.x - 2.0, r.top() - 2.5)], thin);
             painter.line_segment([egui::pos2(c.x + 2.0, r.top()), egui::pos2(c.x + 2.0, r.top() - 2.5)], thin);
             painter.line_segment([egui::pos2(c.x - 2.0, r.bottom()), egui::pos2(c.x - 2.0, r.bottom() + 2.5)], thin);
@@ -177,18 +176,28 @@ fn draw_icon(ui: &mut egui::Ui, icon: HudIcon, color: egui::Color32) {
             painter.line_segment([egui::pos2(r.right(), c.y - 2.0), egui::pos2(r.right() + 2.5, c.y - 2.0)], thin);
             painter.line_segment([egui::pos2(r.right(), c.y + 2.0), egui::pos2(r.right() + 2.5, c.y + 2.0)], thin);
         }
+        HudIcon::Clock => {
+            painter.circle_stroke(c, 5.5, stroke);
+            painter.line_segment([c, egui::pos2(c.x, c.y - 3.0)], thin);
+            painter.line_segment([c, egui::pos2(c.x + 2.0, c.y + 1.0)], thin);
+        }
+        HudIcon::Dot => {
+            painter.circle_filled(c, 2.0, color);
+        }
     }
 }
 
-fn map_icon(icon_str: &str) -> HudIcon {
+fn map_icon(icon_str: &str) -> Option<HudIcon> {
     match icon_str {
-        "project" => HudIcon::Project,
-        "branch" => HudIcon::Branch,
-        "changes" => HudIcon::Changes,
-        "lsp" => HudIcon::Lsp,
-        "diagnostics" => HudIcon::Diagnostics,
-        "agent" => HudIcon::Agent,
-        _ => HudIcon::Project,
+        "project" => Some(HudIcon::Project),
+        "branch" => Some(HudIcon::Branch),
+        "changes" => Some(HudIcon::Changes),
+        "lsp" => Some(HudIcon::Lsp),
+        "diagnostics" => Some(HudIcon::Diagnostics),
+        "agent" => Some(HudIcon::Agent),
+        "clock" => Some(HudIcon::Clock),
+        "dot" => Some(HudIcon::Dot),
+        _ => None,
     }
 }
 
@@ -219,32 +228,39 @@ fn split_diff_stat(value: &str) -> Option<(&str, &str)> {
 
 fn hud_row(
     ui: &mut egui::Ui,
-    icon: HudIcon,
+    icon: Option<HudIcon>,
     label: &str,
     right: Option<RowRight<'_>>,
-    primary: egui::Color32,
-    muted: egui::Color32,
+    label_color: egui::Color32,
+    icon_color: egui::Color32,
     text_size: f32,
     font_family: &egui::FontFamily,
+    row_height: f32,
+    indent: f32,
 ) {
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 24.0),
+        egui::vec2(ui.available_width(), row_height),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            draw_icon(ui, icon, muted);
-            ui.add_space(6.0);
+            if indent > 0.0 {
+                ui.add_space(indent);
+            }
+            if let Some(ico) = icon {
+                draw_icon(ui, ico, icon_color);
+                ui.add_space(6.0);
+            }
             let left_label = egui::Label::new(
                 egui::RichText::new(label)
                     .family(font_family.clone())
                     .size(text_size)
-                    .color(primary),
+                    .color(label_color),
             )
             .truncate();
             ui.add(left_label).on_hover_text(label);
 
             if let Some(right) = right {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let right_size = (text_size - 0.4).max(10.0);
+                    let right_size = (text_size - 0.4).max(9.0);
                     match right {
                         RowRight::Plain(value, color) => {
                             let right_label = egui::Label::new(
@@ -401,7 +417,7 @@ impl EguiEmacsApp for HudApp {
                         let row_icon = if let Some(ref icon_str) = row.icon {
                             map_icon(icon_str)
                         } else {
-                            HudIcon::Project
+                            None
                         };
 
                         let row_color = match row.status.as_deref() {
@@ -433,15 +449,23 @@ impl EguiEmacsApp for HudApp {
                             None
                         };
 
+                        let is_sub_row = matches!(row_icon, Some(HudIcon::Dot));
+                        let row_height = if is_sub_row { 18.0 } else { 22.0 };
+                        let font_size = if is_sub_row { text_size - 1.0 } else { text_size };
+                        let label_color = if is_sub_row { col_text_muted } else { col_text_primary };
+                        let indent = if is_sub_row { 10.0 } else { 0.0 };
+
                         hud_row(
                             ui,
                             row_icon,
                             &row.label,
                             right_content,
-                            col_text_primary,
+                            label_color,
                             col_text_muted,
-                            text_size,
+                            font_size,
                             &font_family,
+                            row_height,
+                            indent,
                         );
                     }
 

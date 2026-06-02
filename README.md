@@ -156,15 +156,18 @@ All options live in the `workspace-hud` customize group (`M-x customize-group RE
 The HUD detects and integrates with the following packages at runtime -- none are required:
 
 **LSP status** (checked in order of priority):
+
 - [Eglot](https://github.com/joaotavora/eglot) (built-in from Emacs 29)
 - [lsp-bridge](https://github.com/manateelazycat/lsp-bridge)
 - [lsp-mode](https://github.com/emacs-lsp/lsp-mode)
 
 **Diagnostics** (first available wins):
+
 - [Flycheck](https://github.com/flycheck/flycheck) (preferred)
 - [Flymake](https://www.gnu.org/software/emacs/manual/html_node/flymake/) (fallback)
 
 **Buffer list filtering**:
+
 - [Consult](https://github.com/minad/consult) -- the HUD's internal xwidget buffer is automatically added to `consult-buffer-filter` to prevent it from appearing in `consult-buffer`.
 
 ## How It Works (Data Flow)
@@ -257,14 +260,16 @@ To prevent screen clipping or scrollbar artifacts, the HUD's child frame height 
 $$\text{Height} = 28 + \sum_{i=1}^S (35 + 24 R_i) + 18(S - 1)$$
 
 Where:
-* $S$ is the number of active sections.
-* $R_i$ is the number of rows in section $i$.
-* $28\text{ px}$ represents the static top and bottom inner margins ($14 \times 2$).
-* $35\text{ px}$ is the height of a section header plus its separator line and spacing ($22 + 4 + 9$).
-* $24\text{ px}$ is the vertical height of a single row.
-* $18\text{ px}$ is the spacing applied between sections.
+
+- $S$ is the number of active sections.
+- $R_i$ is the number of rows in section $i$.
+- $28\text{ px}$ represents the static top and bottom inner margins ($14 \times 2$).
+- $35\text{ px}$ is the height of a section header plus its separator line and spacing ($22 + 4 + 9$).
+- $24\text{ px}$ is the vertical height of a single row.
+- $18\text{ px}$ is the spacing applied between sections.
 
 The height is automatically clamped to a configurable range:
+
 - `workspace-hud-min-height` (default `150`)
 - `workspace-hud-max-height` (default `500`)
 
