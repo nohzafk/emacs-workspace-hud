@@ -2,7 +2,7 @@
 name = "workspace-hud"
 version = "0.1.0"
 edition = "2021"
-description = "Flagship demo for emacs-egui-panel: a workspace-status card rendered with egui/WASM."
+description = "Workspace status HUD for Emacs, built with egui and compiled to WebAssembly."
 publish = false
 
 [lib]

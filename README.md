@@ -3,11 +3,10 @@
 [![Framework](https://img.shields.io/badge/Framework-emacs--egui-8A2BE2.svg?style=flat-square)](https://github.com/nohzafk/emacs-egui)
 [![Rust Version](https://img.shields.io/badge/Rust-2021_Edition-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Target](https://img.shields.io/badge/Target-WebAssembly-blue.svg?style=flat-square&logo=webassembly)](https://webassembly.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
-A modern, highly polished, premium **Workspace Status Heads-Up Display (HUD)** for Emacs.
+A **Workspace Status Heads-Up Display (HUD)** for Emacs -- a floating status card anchored to the top-right corner of your frame, showing project, Git, LSP, and diagnostic state at a glance.
 
-Layered on top of the generic [emacs-egui](https://github.com/nohzafk/emacs-egui) host framework, this package renders a gorgeous floating status card anchored to the top-right corner of your selected Emacs frame. The interface is built in Rust using egui, compiled to WebAssembly, and rendered smoothly inside a focusless `xwidget-webkit` child frame.
+Built on the [emacs-egui](https://github.com/nohzafk/emacs-egui) framework: a Rust/egui UI compiled to WebAssembly, rendered inside a focusless `xwidget-webkit` child frame.
 
 ```text
   +----------------------------------------------------+
@@ -29,14 +28,14 @@ Layered on top of the generic [emacs-egui](https://github.com/nohzafk/emacs-egui
 
 ## Information Model
 
-The HUD should show **attention-worthy, contextual, actionable info** without becoming a second mode line, buffer list, or full dashboard.
+The HUD shows **attention-worthy, contextual, actionable info** -- not a second mode line or full dashboard.
 
-Out of the box, the card ships two built-in sections:
+Out of the box, two built-in sections are provided:
 
 - **Workspace** (priority 10): project name, branch, upstream ahead/behind, and dirty working tree summary (insertions/deletions from staged + unstaged diffs).
 - **Health** (priority 20): LSP connection state (auto-detected from Eglot, lsp-bridge, or lsp-mode) and diagnostic counts (from Flycheck or Flymake).
 
-Additional sections can be added dynamically via the [Extension API](#-extension-api--generic-rendering). Sections are sorted by priority (lower numbers appear first).
+Additional sections can be added dynamically via the [Extension API](#extension-api). Sections are sorted by priority (lower numbers appear first).
 
 ## Repository Layout
 
@@ -51,26 +50,26 @@ emacs-workspace-hud/
 │   ├── src/lib.rs           #   Rust egui app: generic section/row rendering, icons, status colors
 │   ├── index.html           #   HTML bootstrap shell (exposes JS/WASM bridges)
 │   └── pkg/                 #   Generated WebAssembly bundle (wasm-pack output)
-├── docs/                    # Architectural guidelines and detailed notes
-├── tests/                   # ERT test suite covering server, path traversal, Git, and auto modes
+├── docs/                    # Architecture notes and design documents
+├── tests/                   # ERT test suite covering Git collection, extensions, LSP, and auto modes
 ├── justfile                 # Task runner: setup, wasm, test, compile, check, clean
 └── Cargo.toml               # Workspace configuration
 ```
 
-## ⚙️ Requirements
+## Requirements
 
-- **Emacs 29.1+** built **with xwidget support** (`(featurep 'xwidget-internal)`) and standard file notification support (`file-notify`).
-- **git** installed on your system path (for workspace status collection).
-- A standard **Rust toolchain** (2021 edition) and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) to compile the WebAssembly UI.
-- Project automation: [`just`](https://github.com/casey/just) (optional, but highly recommended).
+- **Emacs 29.1+** built with **xwidget support** (`(featurep 'xwidget-internal)`) and `file-notify`.
+- **git** on your system path.
+- **Rust toolchain** (2021 edition) and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) to compile the WebAssembly UI.
+- [`just`](https://github.com/casey/just) task runner (optional, but recommended).
 
-## 📦 Installation
+## Installation
 
-The WebAssembly UI is compiled locally — there are **no prebuilt binaries in the repo** — and `emacs-egui` is vendored as a git submodule (it supplies both the Elisp framework and the Rust SDK used to build the UI). Every install must therefore (1) fetch submodules and (2) compile the Rust UI into `ui/pkg/`.
+The WebAssembly UI is compiled locally -- there are no prebuilt binaries. `emacs-egui` is vendored as a git submodule (Elisp framework + Rust SDK). Every install must (1) fetch submodules and (2) compile the Rust UI into `ui/pkg/`.
 
-### Option A — `use-package` with `:vc` (Emacs 30+)
+### Option A -- `use-package` with `:vc` (Emacs 30+)
 
-A single declaration clones the repo, initialises the bundled `emacs-egui` submodule, and compiles the WebAssembly UI — all at install time. You must opt in to the build step via `package-vc-allow-build-commands`, since `:shell-command` runs code on install.
+A single declaration clones the repo, initialises the submodule, and compiles the UI at install time. You must opt in via `package-vc-allow-build-commands` since `:shell-command` runs code on install.
 
 ```elisp
 ;; Allow the build step for this package (Emacs ignores :shell-command by default).
@@ -89,9 +88,9 @@ A single declaration clones the repo, initialises the bundled `emacs-egui` submo
   (workspace-hud-auto-mode 1))
 ```
 
-After `M-x package-vc-upgrade`, rebuild the UI with `M-x package-vc-rebuild RET emacs-workspace-hud`. On Emacs 29 (no `use-package` `:vc`) use Option B.
+After `M-x package-vc-upgrade`, rebuild the UI with `M-x package-vc-rebuild RET emacs-workspace-hud`. On Emacs 29 (no `:vc` support) use Option B.
 
-### Option B — Manual clone + raw Emacs Lisp (Emacs 29.1+)
+### Option B -- Manual clone (Emacs 29.1+)
 
 ```sh
 git clone --recurse-submodules https://github.com/nohzafk/emacs-workspace-hud.git \
@@ -116,9 +115,9 @@ just wasm    # build the UI into ui/pkg/
 (workspace-hud-auto-mode 1)
 ```
 
-## 🚀 Usage
+## Usage
 
-Once installed, you can control the Workspace HUD with the following interactive commands:
+Interactive commands:
 
 | Command | Description |
 |---|---|
@@ -195,7 +194,7 @@ graph TD
 
     %% Data / Event Flow
     E_Git -- "File Watcher Changes (.git/)" --> E_Lisp
-    E_LSP -- "Diagnostic updates & LSP state" --> E_Lisp
+    E_Lisp -- "Polls LSP state & diagnostics" --> E_LSP
 
     %% Push loop
     E_Lisp -- "Programmatic Push (JSON state)" --> JS_Bridge
@@ -206,12 +205,12 @@ graph TD
 
 1. **Lifecycle Activation**: Calling `workspace-hud-toggle` or changing buffers in auto-mode launches the tiny pure-Elisp HTTP server and maps the xwidget child frame to the top-right corner.
 2. **Theme Bootstrapping**: Emacs reads your current active theme colors (background, foreground, and font heights) and passes them to WebKit via a URL fragment (e.g. `#bg=#0c0c10&fg=#e6ebff`) to guarantee a seamless, zero-flash first paint.
-3. **Data Collection & Real-Time Watching**: Emacs queries your workspace using `vc-git` to gather project details (staged/unstaged files, commits, ahead/behind statistics). To keep the display perfectly in sync with external terminal actions (such as `git branch`, `git commit`, `git add`, etc.), Emacs establishes a lightweight, non-recursive background watcher on the repository's `.git/` directory, immediately triggering a debounced status refresh on any commit, branch switch, pull, or staging activity.
-4. **Programmatic Pushes**: Emacs encodes the workspace state plist to JSON and calls the WebKit bridge `window.hudPushState(json)` dynamically. Egui replaces the state model and requests an immediate repaint, redrawing the canvas in microseconds.
+3. **Data Collection & Real-Time Watching**: On each refresh, Emacs queries workspace state via `vc-git` (branch, ahead/behind, staged/unstaged diffs) and polls LSP and diagnostic providers (Eglot/lsp-bridge/lsp-mode, Flycheck/Flymake). A lightweight `file-notify` watcher on the `.git/` directory triggers a debounced refresh on any commit, branch switch, pull, or staging activity.
+4. **Programmatic Pushes**: Emacs encodes the state plist to JSON and calls `window.hudPushState(json)` via the WebKit bridge. Egui replaces the state model and repaints immediately.
 
-## 🧩 Extension API & Generic Rendering
+## Extension API
 
-`emacs-workspace-hud` supports a fully generic extension API, allowing third-party packages to register custom sections dynamically.
+Third-party packages can register custom HUD sections dynamically.
 
 ### State & Rendering Pipeline
 
@@ -221,7 +220,7 @@ graph TD
     B -->|window.hudPushState| C[WASM Central Panel]
     C -->|Loop & Render| D[Section Header]
     C -->|Loop & Render| E[Generic Rows]
-    E -->|Diff-Stat Regex Match| F[Custom Colorized Diff Stat]
+    E -->|Diff-Stat Pattern Match| F[Custom Colorized Diff Stat]
     E -->|Status Value Check| G[Status Indicator Label]
 ```
 
@@ -248,7 +247,7 @@ Each row is a plist with the following keys:
 | Key | Required | Type | Description |
 |---|---|---|---|
 | `:label` | yes | string | Left-side label text. |
-| `:value` | no | string | Right-side display value. Values matching `+N -M` are rendered as colorized diff stats. |
+| `:value` | yes | string | Right-side display value (use `""` for empty). Values matching `+N -M` are rendered as colorized diff stats. |
 | `:status` | no | string | Color indicator: `"ok"` (green), `"warn"` (orange), `"error"` (red), `"busy"` (blue), or omit for muted. |
 | `:icon` | no | string | Icon name (see [Icon Reference](#icon-reference) below). |
 | `:detail` | no | string | Additional detail text (reserved for future use). |
@@ -267,9 +266,9 @@ Each row is a plist with the following keys:
 | `"clock"` | Circle with hands | Timing / duration. |
 | `"dot"` | Small filled circle | **Sub-row indicator.** Rows using this icon render in a compact sub-row layout: 18 px height (vs 22 px), indented, smaller font, and muted label color. Use it for hierarchical detail beneath a parent row. |
 
-### 📐 Dynamic Height Calculation
+### Dynamic Height Calculation
 
-To prevent screen clipping or scrollbar artifacts, the HUD's child frame height is dynamically calculated in Emacs Lisp on every refresh before repositioning. The panel size is computed using the following layout formula:
+The child frame height is dynamically calculated on every refresh to prevent clipping or scrollbar artifacts:
 
 $$\text{Height} = 28 + \sum_{i=1}^S (35 + 24 R_i) + 18(S - 1)$$
 
@@ -287,9 +286,9 @@ The height is automatically clamped to a configurable range:
 - `workspace-hud-min-height` (default `150`)
 - `workspace-hud-max-height` (default `500`)
 
-## 🧪 Development
+## Development
 
-The project uses [`just`](https://github.com/casey/just) as a task runner:
+[`just`](https://github.com/casey/just) task runner commands:
 
 | Command | Description |
 |---|---|
@@ -310,4 +309,5 @@ emacs -Q --batch -L lisp -L tests \
 
 ## Why a local HTTP server?
 
-WebKit refuses to instantiate WebAssembly from `file://` origins for security reasons, so the assets must be served over an `http://` origin. Rather than relying on external web daemons, global network listeners, npm, or CDN dependencies, this package runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port. It serves only the HUD's compiled `index.html` and `pkg/` WASM bundle entirely in-process and securely.
+WebKit refuses to load WebAssembly from `file://` origins. Rather than requiring external web servers or CDN dependencies, `emacs-egui` runs a **tiny HTTP server in pure Emacs Lisp** (`make-network-process`) bound to `127.0.0.1` on an ephemeral port, serving only the HUD's `index.html` and WASM bundle.
+

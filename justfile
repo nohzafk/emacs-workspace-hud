@@ -30,7 +30,7 @@ setup:
 # Rebuild the demo WASM renderer.
 [group('Build')]
 wasm:
-    cd ui && wasm-pack build --target web
+    cd ui && wasm-pack build --target web --release
 
 # Byte-compile the Lisp as a smoke test.
 [group('Test')]
