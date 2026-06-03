@@ -8,23 +8,8 @@ A **Workspace Status Heads-Up Display (HUD)** for Emacs -- a floating status car
 
 Built on the [emacs-egui](https://github.com/nohzafk/emacs-egui) framework: a Rust/egui UI compiled to WebAssembly, rendered inside a focusless `xwidget-webkit` child frame.
 
-```text
-  +----------------------------------------------------+
-  | Emacs Window                                 [HUD] |
-  |                                 +----------------+ |
-  |                                 | WORKSPACE      | |
-  |                                 | ▫ myproject    | |
-  |                                 | ⑂ main  synced | |
-  |                                 | ◫ dirty  +3 -1 | |
-  |                                 |                | |
-  |                                 | HEALTH         | |
-  |                                 | ⬡ LSP   online | |
-  |                                 | ◇ Diag  1E 2W  | |
-  |                                 +----------------+ |
-  |                                                    |
-  |                                                    |
-  +----------------------------------------------------+
-```
+![Emacs Workspace HUD screenshot](assets/screenshot.png)
+*The "Agent" section is provided by [agent-shell-hud](https://github.com/nohzafk/agent-shell-hud) via the [Extension API](#extension-api).*
 
 ## Information Model
 
