@@ -138,10 +138,11 @@ All options live in the `workspace-hud` customize group (`M-x customize-group RE
 
 ### Visibility Rules
 
-To reduce clutter, the HUD dynamically shows or hides itself based on your active buffer:
+To reduce clutter, the HUD dynamically shows or hides itself based on your active buffer and system status:
 
 - **Automatic mode** (`workspace-hud-auto-mode`): Shows the HUD only in programming buffers (`prog-mode`) that are **inside a Git repository**. It automatically hides in special buffers (like `*Messages*`, `*Help*`, etc.), standard text buffers, or when outside of a Git repository.
 - **Manual mode** (`workspace-hud-toggle`): Shows the HUD in all `prog-mode` buffers (even if they are outside a Git repository, where it will display `"No project"`). It automatically hides when switching to special or non-programming buffers, and restores itself when you switch back to code.
+- **Needs Approval Override** (via `agent-shell-hud`): If an AI agent shell enters a `"warn"` state (e.g. requesting user command/tool execution approval), the HUD **immediately pops up** to alert you, even if you are currently looking at a README, a special buffer, or a non-programming buffer. Once the approval is processed and the warning status clears, the HUD automatically hides itself again.
 
 ### Customizing Visibility
 
