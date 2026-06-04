@@ -32,13 +32,13 @@ emacs-workspace-hud/
 │   ├── lisp/emacs-egui.el   #   HTTP asset server, xwidget session mgmt, JSON IPC bridges
 │   └── sdk/                 #   Rust crate: EguiEmacsApp trait, theme, state push, reverse callbacks
 ├── ui/                      # The egui/WASM status card renderer
+│   ├── Cargo.toml           #   Rust crate manifest (dependencies, wasm target)
 │   ├── src/lib.rs           #   Rust egui app: generic section/row rendering, icons, status colors
 │   ├── index.html           #   HTML bootstrap shell (exposes JS/WASM bridges)
 │   └── pkg/                 #   Generated WebAssembly bundle (wasm-pack output)
 ├── docs/                    # Architecture notes and design documents
 ├── tests/                   # ERT test suite covering Git collection, extensions, LSP, and auto modes
-├── justfile                 # Task runner: setup, wasm, test, compile, check, clean
-└── Cargo.toml               # Workspace configuration
+└── justfile                 # Task runner: setup, wasm, test, compile, check, clean
 ```
 
 ## Requirements
