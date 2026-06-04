@@ -274,9 +274,11 @@
                       (symbol-value 'consult-buffer-filter))))))
 
 (ert-deftest workspace-hud-test-toggle-shows-manual ()
-  (let (shown setup)
+  (let ((workspace-hud--manual-active nil)
+        shown
+        setup)
     (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud--setup-triggers) (lambda () (setq setup t))))
       (workspace-hud-toggle)
       (should-not workspace-hud--auto-paused)
@@ -288,13 +290,14 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           shown
           setup)
       (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
                 ((symbol-function 'workspace-hud--resolve-root)
                  (lambda () "/tmp/repo"))
                 ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
                 ((symbol-function 'workspace-hud--setup-triggers)
                  (lambda () (setq setup t))))
         (workspace-hud--sync-auto)
@@ -306,6 +309,7 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           refreshed
           shown)
       (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
@@ -314,7 +318,7 @@
                 ((symbol-function 'workspace-hud-visible-p) (lambda () t))
                 ((symbol-function 'workspace-hud-refresh)
                  (lambda () (setq refreshed t)))
-                ((symbol-function 'workspace-hud-show)
+                ((symbol-function 'workspace-hud--show-frame)
                  (lambda () (setq shown t))))
         (workspace-hud--sync-auto)
         (should refreshed)
@@ -325,13 +329,14 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           hidden
           shown)
       (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
                 ((symbol-function 'workspace-hud--resolve-root)
                  (lambda () nil))
                 ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t))))
         (workspace-hud--sync-auto)
         (should hidden)
         (should-not shown)))))
@@ -341,6 +346,7 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused t)
           hidden
           shown
@@ -351,7 +357,7 @@
                    (setq resolved t)
                    "/tmp/repo"))
                 ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t))))
         (workspace-hud--sync-auto)
         (should hidden)
         (should-not shown)
@@ -362,6 +368,7 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           hidden
           pushed
           themed)
@@ -383,6 +390,7 @@
   (with-temp-buffer
     (emacs-lisp-mode)
     (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused t)
           hidden
           pushed
@@ -416,6 +424,7 @@
 (ert-deftest workspace-hud-test-manual-hide-pauses-auto-mode ()
   "Manual hide prevents auto mode from immediately reopening the HUD."
   (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active t)
         (workspace-hud--auto-paused nil)
         hidden)
     (cl-letf (((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
@@ -426,9 +435,10 @@
 (ert-deftest workspace-hud-test-manual-show-clears-auto-pause ()
   "Manual show re-enables automatic HUD visibility."
   (let ((workspace-hud--auto-paused t)
+        (workspace-hud--manual-active nil)
         shown
         setup)
-    (cl-letf (((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+    (cl-letf (((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud--setup-triggers)
                (lambda () (setq setup t))))
       (workspace-hud--show-manual)
@@ -436,14 +446,49 @@
       (should setup)
       (should shown))))
 
+(ert-deftest workspace-hud-test-show-command-claims-manual-visibility ()
+  "Direct `workspace-hud-show' should behave like a manual show command."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
+          (workspace-hud--auto-paused t)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate))
+          shown
+          setup)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root) (lambda () nil))
+                ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud--setup-triggers)
+                 (lambda () (setq setup t))))
+        (workspace-hud-show)
+        (should workspace-hud--manual-active)
+        (should-not workspace-hud--auto-paused)
+        (should setup)
+        (should shown)))))
+
+(ert-deftest workspace-hud-test-manual-visibility-allows-non-git-prog-buffer ()
+  "Manual visibility should allow programming buffers outside Git repos."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active t)
+          (workspace-hud--auto-paused nil)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate)))
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root) (lambda () nil)))
+        (should (workspace-hud--should-show-p))))))
+
 (ert-deftest workspace-hud-test-visibility-predicate-shows-in-prog-mode ()
   "HUD shows in programming buffers but hides in special/text buffers."
   (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active nil)
         shown hidden)
     (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
               ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
               ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
       ;; 1. In a programming buffer, it should show
       (with-temp-buffer
@@ -463,6 +508,7 @@
 (ert-deftest workspace-hud-test-visibility-custom-predicates ()
   "HUD visibility respects custom predicate functions."
   (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active nil)
         (workspace-hud-show-predicates
          (cons (lambda (buf)
                  (with-current-buffer buf
@@ -472,7 +518,7 @@
     (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
               ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
               ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
               ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
       ;; Since text-mode is added to predicates, it should now show in text-mode
       (with-temp-buffer

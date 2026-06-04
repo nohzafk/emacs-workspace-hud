@@ -111,11 +111,13 @@ the list returns non-nil for the target buffer."
 (defun workspace-hud-default-show-predicate (buffer)
   "Default predicate to check if the HUD should show for BUFFER.
 Returns non-nil if BUFFER is derived from `prog-mode'.
-If `workspace-hud-auto-mode' is active, also requires the buffer to be in a Git repository."
+If `workspace-hud-auto-mode' is active without a manual request, also requires
+the buffer to be in a Git repository."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (and (derived-mode-p 'prog-mode)
-           (or (not workspace-hud-auto-mode)
+           (or (bound-and-true-p workspace-hud--manual-active)
+               (not (bound-and-true-p workspace-hud-auto-mode))
                (workspace-hud--resolve-root))))))
 
 ;; Internal state.
@@ -377,12 +379,11 @@ returns non-nil for the target buffer."
             (workspace-hud--setup-triggers)
             (if (workspace-hud-visible-p)
                 (workspace-hud-refresh)
-              (workspace-hud-show)))
+              (workspace-hud--show-frame)))
         (workspace-hud-hide)))))
 
-(defun workspace-hud-show ()
-  "Show the HUD, initializing the session on first use."
-  (interactive)
+(defun workspace-hud--show-frame ()
+  "Show the HUD frame/session without changing visibility ownership."
   (if (frame-live-p workspace-hud--frame)
       (progn
         (make-frame-visible workspace-hud--frame)
@@ -390,6 +391,11 @@ returns non-nil for the target buffer."
         (workspace-hud--reposition-frame)
         (workspace-hud-refresh))
     (workspace-hud--initialize-session)))
+
+(defun workspace-hud-show ()
+  "Show the HUD and keep it visible as a manual request."
+  (interactive)
+  (workspace-hud--show-manual))
 
 (defun workspace-hud-hide ()
   "Hide the HUD frame without destroying the session."
