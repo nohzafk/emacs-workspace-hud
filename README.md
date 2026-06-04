@@ -134,6 +134,33 @@ All options live in the `workspace-hud` customize group (`M-x customize-group RE
 | `workspace-hud-margin-top` | `20` | Vertical offset from the top edge of the parent frame. |
 | `workspace-hud-debounce` | `0.5` | Idle seconds before refreshing after a buffer or window change. |
 | `workspace-hud-surface-background` | `nil` | Optional panel surface color. When `nil`, the default face background is used. |
+| `workspace-hud-show-predicates` | `'(workspace-hud-default-show-predicate)` | List of predicate functions deciding if the HUD should be visible. |
+
+### Visibility Rules
+
+To reduce clutter, the HUD dynamically shows or hides itself based on your active buffer:
+
+- **Automatic mode** (`workspace-hud-auto-mode`): Shows the HUD only in programming buffers (`prog-mode`) that are **inside a Git repository**. It automatically hides in special buffers (like `*Messages*`, `*Help*`, etc.), standard text buffers, or when outside of a Git repository.
+- **Manual mode** (`workspace-hud-toggle`): Shows the HUD in all `prog-mode` buffers (even if they are outside a Git repository, where it will display `"No project"`). It automatically hides when switching to special or non-programming buffers, and restores itself when you switch back to code.
+
+### Customizing Visibility
+
+You can customize the showing conditions by modifying the `workspace-hud-show-predicates` list. The HUD will be displayed if **any** predicate in the list returns non-nil for the target buffer.
+
+For example, to also show the HUD in `org-mode` buffers:
+
+```elisp
+(add-to-list 'workspace-hud-show-predicates
+             (lambda (buf)
+               (with-current-buffer buf
+                 (derived-mode-p 'org-mode))))
+```
+
+Integration packages like `agent-shell-hud` use this same mechanism to keep the HUD visible when inside agent shell or viewport buffers:
+
+```elisp
+(add-to-list 'workspace-hud-show-predicates #'agent-shell-hud--show-predicate)
+```
 
 ## Optional Integrations
 

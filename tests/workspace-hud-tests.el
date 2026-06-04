@@ -217,6 +217,8 @@
     (cl-letf (((symbol-function 'lsp-bridge-has-lsp-server-p) (lambda () t)))
       (should (equal (workspace-hud--lsp-status) "online"))))
   (workspace-hud-tests--with-symbol-values ((lsp-mode t))
+    (should (equal (workspace-hud--lsp-status) "online")))
+  (workspace-hud-tests--with-symbol-values ((lsp-actor-mode t))
     (should (equal (workspace-hud--lsp-status) "online"))))
 
 (ert-deftest workspace-hud-test-lsp-status-distinguishes-non-code-buffers ()
@@ -283,102 +285,120 @@
 
 (ert-deftest workspace-hud-test-auto-sync-shows-in-repo ()
   "Auto mode shows the panel when the selected buffer belongs to a repo."
-  (let ((workspace-hud-auto-mode t)
-        shown
-        setup)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda () "/tmp/repo"))
-              ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
-              ((symbol-function 'workspace-hud--setup-triggers)
-               (lambda () (setq setup t))))
-      (workspace-hud--sync-auto)
-      (should setup)
-      (should shown))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          shown
+          setup)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda () "/tmp/repo"))
+                ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud--setup-triggers)
+                 (lambda () (setq setup t))))
+        (workspace-hud--sync-auto)
+        (should setup)
+        (should shown)))))
 
 (ert-deftest workspace-hud-test-auto-sync-refreshes-visible-repo ()
   "Auto mode refreshes instead of recreating an already visible panel."
-  (let ((workspace-hud-auto-mode t)
-        refreshed
-        shown)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda () "/tmp/repo"))
-              ((symbol-function 'workspace-hud-visible-p) (lambda () t))
-              ((symbol-function 'workspace-hud-refresh)
-               (lambda () (setq refreshed t)))
-              ((symbol-function 'workspace-hud-show)
-               (lambda () (setq shown t))))
-      (workspace-hud--sync-auto)
-      (should refreshed)
-      (should-not shown))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          refreshed
+          shown)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda () "/tmp/repo"))
+                ((symbol-function 'workspace-hud-visible-p) (lambda () t))
+                ((symbol-function 'workspace-hud-refresh)
+                 (lambda () (setq refreshed t)))
+                ((symbol-function 'workspace-hud-show)
+                 (lambda () (setq shown t))))
+        (workspace-hud--sync-auto)
+        (should refreshed)
+        (should-not shown)))))
 
 (ert-deftest workspace-hud-test-auto-sync-hides-outside-repo ()
   "Auto mode hides the panel when the selected buffer is outside Git."
-  (let ((workspace-hud-auto-mode t)
-        hidden
-        shown)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda () nil))
-              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
-      (workspace-hud--sync-auto)
-      (should hidden)
-      (should-not shown))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          hidden
+          shown)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda () nil))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
+        (workspace-hud--sync-auto)
+        (should hidden)
+        (should-not shown)))))
 
 (ert-deftest workspace-hud-test-auto-sync-stays-hidden-when-paused ()
   "Manual off pauses auto mode until the user explicitly turns it back on."
-  (let ((workspace-hud-auto-mode t)
-        (workspace-hud--auto-paused t)
-        hidden
-        shown
-        resolved)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda ()
-                 (setq resolved t)
-                 "/tmp/repo"))
-              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
-      (workspace-hud--sync-auto)
-      (should hidden)
-      (should-not shown)
-      (should-not resolved))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--auto-paused t)
+          hidden
+          shown
+          resolved)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda ()
+                   (setq resolved t)
+                   "/tmp/repo"))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+                ((symbol-function 'workspace-hud-show) (lambda () (setq shown t))))
+        (workspace-hud--sync-auto)
+        (should hidden)
+        (should-not shown)
+        (should-not resolved)))))
 
 (ert-deftest workspace-hud-test-refresh-hides-outside-repo-in-auto-mode ()
   "Auto refresh hides outside Git instead of pushing placeholder state."
-  (let ((workspace-hud-auto-mode t)
-        hidden
-        pushed
-        themed)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda () nil))
-              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'workspace-hud--push-state)
-               (lambda (_state) (setq pushed t)))
-              ((symbol-function 'workspace-hud--push-theme)
-               (lambda () (setq themed t))))
-      (workspace-hud-refresh)
-      (should hidden)
-      (should-not pushed)
-      (should-not themed))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          hidden
+          pushed
+          themed)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda () nil))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+                ((symbol-function 'workspace-hud--push-state)
+                 (lambda (_state) (setq pushed t)))
+                ((symbol-function 'workspace-hud--push-theme)
+                 (lambda () (setq themed t))))
+        (workspace-hud-refresh)
+        (should hidden)
+        (should-not pushed)
+        (should-not themed)))))
 
 (ert-deftest workspace-hud-test-refresh-hides-when-auto-paused ()
   "Auto refresh respects a manual pause even in a Git repo."
-  (let ((workspace-hud-auto-mode t)
-        (workspace-hud--auto-paused t)
-        hidden
-        pushed
-        themed)
-    (cl-letf (((symbol-function 'workspace-hud--resolve-root)
-               (lambda () "/tmp/repo"))
-              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
-              ((symbol-function 'workspace-hud--push-state)
-               (lambda (_state) (setq pushed t)))
-              ((symbol-function 'workspace-hud--push-theme)
-               (lambda () (setq themed t))))
-      (workspace-hud-refresh)
-      (should hidden)
-      (should-not pushed)
-      (should-not themed))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--auto-paused t)
+          hidden
+          pushed
+          themed)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root)
+                 (lambda () "/tmp/repo"))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t)))
+                ((symbol-function 'workspace-hud--push-state)
+                 (lambda (_state) (setq pushed t)))
+                ((symbol-function 'workspace-hud--push-theme)
+                 (lambda () (setq themed t))))
+        (workspace-hud-refresh)
+        (should hidden)
+        (should-not pushed)
+        (should-not themed)))))
 
 (ert-deftest workspace-hud-test-auto-change-schedules-while-hidden ()
   "Auto mode keeps listening while hidden so it can reappear in Git repos."
@@ -391,7 +411,7 @@
                  (setq scheduled fn)
                  'workspace-hud-test-timer)))
       (workspace-hud--on-change)
-      (should (eq scheduled #'workspace-hud--sync-auto)))))
+      (should (eq scheduled #'workspace-hud--sync-visibility)))))
 
 (ert-deftest workspace-hud-test-manual-hide-pauses-auto-mode ()
   "Manual hide prevents auto mode from immediately reopening the HUD."
@@ -415,6 +435,51 @@
       (should-not workspace-hud--auto-paused)
       (should setup)
       (should shown))))
+
+(ert-deftest workspace-hud-test-visibility-predicate-shows-in-prog-mode ()
+  "HUD shows in programming buffers but hides in special/text buffers."
+  (let ((workspace-hud-auto-mode t)
+        shown hidden)
+    (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+              ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
+              ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
+      ;; 1. In a programming buffer, it should show
+      (with-temp-buffer
+        (emacs-lisp-mode)
+        (workspace-hud--sync-visibility)
+        (should shown)
+        (should-not hidden))
+      ;; Reset
+      (setq shown nil hidden nil)
+      ;; 2. In a text/special buffer, it should hide
+      (with-temp-buffer
+        (text-mode)
+        (workspace-hud--sync-visibility)
+        (should-not shown)
+        (should hidden)))))
+
+(ert-deftest workspace-hud-test-visibility-custom-predicates ()
+  "HUD visibility respects custom predicate functions."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud-show-predicates
+         (cons (lambda (buf)
+                 (with-current-buffer buf
+                   (derived-mode-p 'text-mode)))
+               workspace-hud-show-predicates))
+        shown hidden)
+    (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+              ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
+              ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+              ((symbol-function 'workspace-hud-show) (lambda () (setq shown t)))
+              ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
+      ;; Since text-mode is added to predicates, it should now show in text-mode
+      (with-temp-buffer
+        (text-mode)
+        (workspace-hud--sync-visibility)
+        (should shown)
+        (should-not hidden)))))
 
 (ert-deftest workspace-hud-test-update-watch-lifecycle ()
   "Test that `workspace-hud--update-watch' starts, switches, and cancels file watches correctly."

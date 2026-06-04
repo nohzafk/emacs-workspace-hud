@@ -100,8 +100,28 @@ stars keep the buffer classified with special/internal buffers."
 WebKit can briefly rename the xwidget buffer from the page title before the HUD
 renames it back to `workspace-hud-xwidget-buffer-name'.")
 
+(defcustom workspace-hud-show-predicates '(workspace-hud-default-show-predicate)
+  "List of predicate functions to decide if the workspace HUD should be shown.
+Each function takes a buffer as an argument and should return non-nil
+if the HUD should be displayed. The HUD is shown if any predicate in
+the list returns non-nil for the target buffer."
+  :type '(repeat function)
+  :group 'workspace-hud)
+
+(defun workspace-hud-default-show-predicate (buffer)
+  "Default predicate to check if the HUD should show for BUFFER.
+Returns non-nil if BUFFER is derived from `prog-mode'.
+If `workspace-hud-auto-mode' is active, also requires the buffer to be in a Git repository."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (and (derived-mode-p 'prog-mode)
+           (or (not workspace-hud-auto-mode)
+               (workspace-hud--resolve-root))))))
+
 ;; Internal state.
 (defvar workspace-hud--frame nil)
+(defvar workspace-hud--manual-active nil
+  "Non-nil when the workspace HUD is manually toggled active.")
 (defvar workspace-hud--parent-frame nil)
 (defvar workspace-hud--session nil)
 (defvar workspace-hud--debounce-timer nil)
@@ -331,6 +351,30 @@ Selecting an xwidget buffer into another window can signal
       (message "workspace-hud: panel session ready via emacs-egui"))
     (workspace-hud--reposition-frame)))
 
+(defun workspace-hud--should-show-p ()
+  "Return non-nil if the HUD should currently be visible.
+The HUD should be visible if either `workspace-hud-auto-mode' or
+`workspace-hud--manual-active' is non-nil, we are not auto-paused,
+and at least one predicate in `workspace-hud-show-predicates'
+returns non-nil for the target buffer."
+  (and (or workspace-hud-auto-mode workspace-hud--manual-active)
+       (not workspace-hud--auto-paused)
+       (let ((target-buf (workspace-hud--target-buffer)))
+         (and target-buf
+              (cl-some (lambda (pred)
+                         (ignore-errors (funcall pred target-buf)))
+                       workspace-hud-show-predicates)))))
+
+(defun workspace-hud--sync-visibility ()
+  "Synchronize HUD visibility and update its state based on the current context."
+  (if (workspace-hud--should-show-p)
+      (progn
+        (workspace-hud--setup-triggers)
+        (if (workspace-hud-visible-p)
+            (workspace-hud-refresh)
+          (workspace-hud-show)))
+    (workspace-hud-hide)))
+
 (defun workspace-hud-show ()
   "Show the HUD, initializing the session on first use."
   (interactive)
@@ -356,6 +400,8 @@ Selecting an xwidget buffer into another window can signal
 (defun workspace-hud-cleanup ()
   "Tear down the HUD frame, xwidget session, and active watchers."
   (interactive)
+  (setq workspace-hud--manual-active nil)
+  (setq workspace-hud--auto-paused nil)
   (workspace-hud--update-watch nil)
   (workspace-hud--remove-hooks)
   (when (frame-live-p workspace-hud--frame)
@@ -490,7 +536,8 @@ Selecting an xwidget buffer into another window can signal
                (ignore-errors
                  (funcall (symbol-function 'lsp-bridge-has-lsp-server-p)))))
       (bound-and-true-p lsp-mode)
-      (bound-and-true-p lsp--buffer-workspaces)))
+      (bound-and-true-p lsp--buffer-workspaces)
+      (bound-and-true-p lsp-actor-mode)))
 
 (defun workspace-hud--lsp-status ()
   "Return a compact LSP status string for the current buffer."
@@ -662,13 +709,13 @@ the selected window in the current frame."
          (root (and root (directory-file-name (expand-file-name root))))
          (sections (workspace-hud--collect-sections root target-buffer)))
     (workspace-hud--update-watch root)
-    (if (and workspace-hud-auto-mode
-             (or workspace-hud--auto-paused (not root)))
-        (workspace-hud-hide)
-      (setq workspace-hud--calculated-height (workspace-hud--compute-height sections))
-      (workspace-hud--reposition-frame)
-      (workspace-hud--push-theme)
-      (workspace-hud--push-state (list :sections sections)))))
+    (if (workspace-hud--should-show-p)
+        (progn
+          (setq workspace-hud--calculated-height (workspace-hud--compute-height sections))
+          (workspace-hud--reposition-frame)
+          (workspace-hud--push-theme)
+          (workspace-hud--push-state (list :sections sections)))
+      (workspace-hud-hide))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -714,42 +761,27 @@ If ROOT is nil, or if it changes, any existing watch is cleanly removed."
                     ;; Trigger a debounced refresh
                     (workspace-hud--schedule
                      workspace-hud-debounce
-                     (if workspace-hud-auto-mode
-                         #'workspace-hud--sync-auto
-                       #'workspace-hud-refresh)))))))
+                     #'workspace-hud--sync-visibility))))))
           (when watch-desc
             (setq workspace-hud--file-watch (cons root watch-desc))))))))
 
 (defun workspace-hud--sync-auto ()
   "Show the HUD for Git-backed buffers and hide it elsewhere."
-  (when workspace-hud-auto-mode
-    (if workspace-hud--auto-paused
-        (workspace-hud-hide)
-      (if (workspace-hud--resolve-root)
-          (progn
-            (workspace-hud--setup-triggers)
-            (if (workspace-hud-visible-p)
-                (workspace-hud-refresh)
-              (workspace-hud-show)))
-        (workspace-hud-hide)))))
+  (workspace-hud--sync-visibility))
 
 (defun workspace-hud--on-change (&rest _)
   "Debounced refresh on buffer/window change."
-  (when (or workspace-hud-auto-mode (workspace-hud-visible-p))
+  (when (or workspace-hud-auto-mode workspace-hud--manual-active)
     (workspace-hud--schedule
      workspace-hud-debounce
-     (if workspace-hud-auto-mode
-         #'workspace-hud--sync-auto
-       #'workspace-hud-refresh))))
+     #'workspace-hud--sync-visibility)))
 
 (defun workspace-hud--on-save ()
   "Refresh shortly after saving a file."
-  (when (or workspace-hud-auto-mode (workspace-hud-visible-p))
+  (when (or workspace-hud-auto-mode workspace-hud--manual-active)
     (workspace-hud--schedule
      0.1
-     (if workspace-hud-auto-mode
-         #'workspace-hud--sync-auto
-       #'workspace-hud-refresh))))
+     #'workspace-hud--sync-visibility)))
 
 (defun workspace-hud--setup-triggers ()
   "Register collection triggers."
@@ -774,11 +806,13 @@ If ROOT is nil, or if it changes, any existing watch is cleanly removed."
 (defun workspace-hud--show-manual ()
   "Show the workspace HUD with manual trigger ownership."
   (setq workspace-hud--auto-paused nil)
+  (setq workspace-hud--manual-active t)
   (workspace-hud--setup-triggers)
-  (workspace-hud-show))
+  (workspace-hud--sync-visibility))
 
 (defun workspace-hud--hide-manual ()
   "Hide the workspace HUD and release manual trigger ownership."
+  (setq workspace-hud--manual-active nil)
   (when workspace-hud-auto-mode
     (setq workspace-hud--auto-paused t))
   (workspace-hud-hide)
