@@ -122,6 +122,8 @@ If `workspace-hud-auto-mode' is active, also requires the buffer to be in a Git 
 (defvar workspace-hud--frame nil)
 (defvar workspace-hud--manual-active nil
   "Non-nil when the workspace HUD is manually toggled active.")
+(defvar workspace-hud--in-sync nil
+  "Non-nil when the HUD is currently synchronizing visibility.")
 (defvar workspace-hud--parent-frame nil)
 (defvar workspace-hud--session nil)
 (defvar workspace-hud--debounce-timer nil)
@@ -367,13 +369,16 @@ returns non-nil for the target buffer."
 
 (defun workspace-hud--sync-visibility ()
   "Synchronize HUD visibility and update its state based on the current context."
-  (if (workspace-hud--should-show-p)
-      (progn
-        (workspace-hud--setup-triggers)
-        (if (workspace-hud-visible-p)
-            (workspace-hud-refresh)
-          (workspace-hud-show)))
-    (workspace-hud-hide)))
+  (unless workspace-hud--in-sync
+    (let ((workspace-hud--in-sync t)
+          (should-show (workspace-hud--should-show-p)))
+      (if should-show
+          (progn
+            (workspace-hud--setup-triggers)
+            (if (workspace-hud-visible-p)
+                (workspace-hud-refresh)
+              (workspace-hud-show)))
+        (workspace-hud-hide)))))
 
 (defun workspace-hud-show ()
   "Show the HUD, initializing the session on first use."
