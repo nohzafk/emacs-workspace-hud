@@ -110,15 +110,13 @@ the list returns non-nil for the target buffer."
 
 (defun workspace-hud-default-show-predicate (buffer)
   "Default predicate to check if the HUD should show for BUFFER.
-Returns non-nil if BUFFER is derived from `prog-mode'.
-If `workspace-hud-auto-mode' is active without a manual request, also requires
-the buffer to be in a Git repository."
+Returns non-nil if BUFFER is a file-visiting buffer derived from
+`prog-mode' and is not a special buffer (name starting with \" \" or \"*\")."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (and (derived-mode-p 'prog-mode)
-           (or (bound-and-true-p workspace-hud--manual-active)
-               (not (bound-and-true-p workspace-hud-auto-mode))
-               (workspace-hud--resolve-root))))))
+           (buffer-file-name)
+           (not (string-prefix-p " " (buffer-name)))))))
 
 ;; Internal state.
 (defvar workspace-hud--frame nil)
@@ -666,10 +664,15 @@ the selected window in the current frame."
                     (value . ,changes)
                     (status . ,status)
                     (icon . "changes"))))
-             (list
-              `((label . "No project") (value . "") (icon . "project"))
-              `((label . "no branch") (value . "") (icon . "branch"))
-              `((label . "Dirty") (value . "+0 -0") (status . "muted") (icon . "changes"))))))
+             (let ((dir-name (if target-buffer
+                                 (with-current-buffer target-buffer
+                                   (file-name-nondirectory
+                                    (directory-file-name default-directory)))
+                               "No project")))
+               (list
+                `((label . ,dir-name) (value . "") (icon . "project"))
+                `((label . "no branch") (value . "") (status . "muted") (icon . "branch"))
+                `((label . "Dirty") (value . "—") (status . "muted") (icon . "changes")))))))
       (push `((title . "Workspace")
               (priority . 10)
               (rows . ,workspace-rows))
@@ -777,7 +780,7 @@ If ROOT is nil, or if it changes, any existing watch is cleanly removed."
             (setq workspace-hud--file-watch (cons root watch-desc))))))))
 
 (defun workspace-hud--sync-auto ()
-  "Show the HUD for Git-backed buffers and hide it elsewhere."
+  "Show the HUD for file-visiting prog-mode buffers and hide it elsewhere."
   (workspace-hud--sync-visibility))
 
 (defun workspace-hud--on-change (&rest _)
@@ -840,7 +843,7 @@ If ROOT is nil, or if it changes, any existing watch is cleanly removed."
 
 ;;;###autoload
 (define-minor-mode workspace-hud-auto-mode
-  "Automatically show the workspace HUD in Git repos and hide it elsewhere."
+  "Automatically show the workspace HUD in programming buffers and hide it elsewhere."
   :global t
   :group 'workspace-hud
   (if workspace-hud-auto-mode
