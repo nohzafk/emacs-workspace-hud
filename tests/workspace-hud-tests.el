@@ -274,21 +274,28 @@
                       (symbol-value 'consult-buffer-filter))))))
 
 (ert-deftest workspace-hud-test-toggle-shows-manual ()
-  (let ((workspace-hud--manual-active nil)
-        shown
-        setup)
-    (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))
-              ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
-              ((symbol-function 'workspace-hud--setup-triggers) (lambda () (setq setup t))))
-      (workspace-hud-toggle)
-      (should-not workspace-hud--auto-paused)
-      (should setup)
-      (should shown))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud--manual-active nil)
+          shown
+          setup)
+      (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud--setup-triggers) (lambda () (setq setup t)))
+                ((symbol-function 'workspace-hud--target-buffer) #'current-buffer))
+        (workspace-hud-toggle)
+        (should-not workspace-hud--auto-paused)
+        (should setup)
+        (should shown)))))
 
 (ert-deftest workspace-hud-test-auto-sync-shows-in-repo ()
   "Auto mode shows the panel when the selected buffer belongs to a repo."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           shown
@@ -308,6 +315,8 @@
   "Auto mode refreshes instead of recreating an already visible panel."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           refreshed
@@ -345,6 +354,8 @@
   "Manual off pauses auto mode until the user explicitly turns it back on."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused t)
@@ -389,6 +400,8 @@
   "Auto refresh respects a manual pause even in a Git repo."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused t)
@@ -434,22 +447,29 @@
 
 (ert-deftest workspace-hud-test-manual-show-clears-auto-pause ()
   "Manual show re-enables automatic HUD visibility."
-  (let ((workspace-hud--auto-paused t)
-        (workspace-hud--manual-active nil)
-        shown
-        setup)
-    (cl-letf (((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
-              ((symbol-function 'workspace-hud--setup-triggers)
-               (lambda () (setq setup t))))
-      (workspace-hud--show-manual)
-      (should-not workspace-hud--auto-paused)
-      (should setup)
-      (should shown))))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud--auto-paused t)
+          (workspace-hud--manual-active nil)
+          shown
+          setup)
+      (cl-letf (((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud--setup-triggers)
+                 (lambda () (setq setup t)))
+                ((symbol-function 'workspace-hud--target-buffer) #'current-buffer))
+        (workspace-hud--show-manual)
+        (should-not workspace-hud--auto-paused)
+        (should setup)
+        (should shown)))))
 
 (ert-deftest workspace-hud-test-show-command-claims-manual-visibility ()
   "Direct `workspace-hud-show' should behave like a manual show command."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused t)
@@ -472,6 +492,8 @@
   "Manual visibility should allow programming buffers outside Git repos."
   (with-temp-buffer
     (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active t)
           (workspace-hud--auto-paused nil)
@@ -493,6 +515,8 @@
       ;; 1. In a programming buffer, it should show
       (with-temp-buffer
         (emacs-lisp-mode)
+        (rename-buffer "fake.el" t)
+        (setq buffer-file-name "/tmp/fake.el")
         (workspace-hud--sync-visibility)
         (should shown)
         (should-not hidden))
@@ -675,6 +699,52 @@
         ;; target-buffer should resolve to the real prog-mode buffer
         (workspace-hud--sync-visibility)
         (should-not hide-called)))))
+
+(ert-deftest workspace-hud-test-flymake-diagnostics-trigger ()
+  "Test that Flymake diagnostic updates trigger a debounced HUD refresh."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active nil)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer))
+              ((symbol-function 'cancel-timer) #'ignore))
+      ;; Set up triggers to apply the advice.
+      (workspace-hud--setup-triggers)
+      (unwind-protect
+          (progn
+            ;; Simulate Flymake reporting diagnostics.
+            (let ((inhibit-message t))
+              (unless (fboundp 'flymake--handle-report)
+                (defun flymake--handle-report (&rest _args) nil))
+              (flymake--handle-report 'mock-backend 'mock-token nil))
+            (should (eq scheduled #'workspace-hud--sync-visibility)))
+        ;; Make sure to clean up/remove triggers advice.
+        (workspace-hud--teardown-triggers)))))
+
+(ert-deftest workspace-hud-test-flycheck-diagnostics-trigger ()
+  "Test that Flycheck diagnostic updates trigger a debounced HUD refresh."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active nil)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer))
+              ((symbol-function 'cancel-timer) #'ignore))
+      ;; Set up triggers.
+      (workspace-hud--setup-triggers)
+      (unwind-protect
+          (progn
+            ;; Simulate Flycheck reporting diagnostics.
+            (let ((inhibit-message t))
+              (run-hooks 'flycheck-after-syntax-check-hook))
+            (should (eq scheduled #'workspace-hud--sync-visibility)))
+        ;; Clean up.
+        (workspace-hud--teardown-triggers)))))
 
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here

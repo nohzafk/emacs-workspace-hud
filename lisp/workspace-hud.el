@@ -811,17 +811,28 @@ HUD to flash off and back on."
      0.1
      #'workspace-hud--sync-visibility)))
 
+(defun workspace-hud--on-diagnostics-changed (&rest _)
+  "Refresh shortly after Flymake or Flycheck diagnostics change."
+  (when (or workspace-hud-auto-mode workspace-hud--manual-active)
+    (workspace-hud--schedule
+     workspace-hud-debounce
+     #'workspace-hud--sync-visibility)))
+
 (defun workspace-hud--setup-triggers ()
   "Register collection triggers."
   (add-hook 'window-buffer-change-functions #'workspace-hud--on-change)
   (add-hook 'window-selection-change-functions #'workspace-hud--on-change)
-  (add-hook 'after-save-hook #'workspace-hud--on-save))
+  (add-hook 'after-save-hook #'workspace-hud--on-save)
+  (advice-add 'flymake--handle-report :after #'workspace-hud--on-diagnostics-changed)
+  (add-hook 'flycheck-after-syntax-check-hook #'workspace-hud--on-diagnostics-changed))
 
 (defun workspace-hud--teardown-triggers ()
   "Remove collection triggers."
   (remove-hook 'window-buffer-change-functions #'workspace-hud--on-change)
   (remove-hook 'window-selection-change-functions #'workspace-hud--on-change)
   (remove-hook 'after-save-hook #'workspace-hud--on-save)
+  (advice-remove 'flymake--handle-report #'workspace-hud--on-diagnostics-changed)
+  (remove-hook 'flycheck-after-syntax-check-hook #'workspace-hud--on-diagnostics-changed)
   (when workspace-hud--debounce-timer
     (cancel-timer workspace-hud--debounce-timer)
     (setq workspace-hud--debounce-timer nil))
