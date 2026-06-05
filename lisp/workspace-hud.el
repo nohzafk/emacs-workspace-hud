@@ -618,12 +618,22 @@ through it; otherwise Flymake is used."
 ;; ---------------------------------------------------------------------------
 
 (defun workspace-hud--target-buffer ()
-  "Return the buffer the user is actually looking at."
-  (let ((window (if (frame-live-p workspace-hud--parent-frame)
-                    (frame-selected-window workspace-hud--parent-frame)
-                  (selected-window))))
+  "Return the buffer the user is actually looking at.
+When the minibuffer is active, return the buffer from the most
+recent non-minibuffer window so that transient prompts (M-x,
+`completing-read', etc.) do not cause the HUD to flicker."
+  (let* ((frame (if (frame-live-p workspace-hud--parent-frame)
+                    workspace-hud--parent-frame
+                  (selected-frame)))
+         (window (frame-selected-window frame)))
     (when (window-live-p window)
-      (window-buffer window))))
+      (if (minibuffer-window-active-p (minibuffer-window frame))
+          ;; Minibuffer owns focus — walk the window list to find the
+          ;; most recently used non-minibuffer window on this frame.
+          (let ((mru (get-mru-window frame nil nil t)))
+            (when (window-live-p mru)
+              (window-buffer mru)))
+        (window-buffer window)))))
 
 (defun workspace-hud--resolve-root ()
   "Resolve the repo root from the buffer the user is actually looking at.
@@ -784,8 +794,12 @@ If ROOT is nil, or if it changes, any existing watch is cleanly removed."
   (workspace-hud--sync-visibility))
 
 (defun workspace-hud--on-change (&rest _)
-  "Debounced refresh on buffer/window change."
-  (when (or workspace-hud-auto-mode workspace-hud--manual-active)
+  "Debounced refresh on buffer/window change.
+Skips scheduling when the minibuffer is active, since the user's
+real buffer has not changed and re-evaluating would only cause the
+HUD to flash off and back on."
+  (when (and (or workspace-hud-auto-mode workspace-hud--manual-active)
+             (not (minibuffer-window-active-p (minibuffer-window))))
     (workspace-hud--schedule
      workspace-hud-debounce
      #'workspace-hud--sync-visibility)))

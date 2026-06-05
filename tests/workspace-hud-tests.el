@@ -597,5 +597,84 @@
       (should-not workspace-hud--file-watch)
       (should (eq removed-watch 'mock-desc)))))
 
+;; ---------------------------------------------------------------------------
+;; Minibuffer stability tests
+;; ---------------------------------------------------------------------------
+
+(ert-deftest workspace-hud-test-target-buffer-skips-minibuffer ()
+  "When the minibuffer is active, `--target-buffer' returns the MRU non-minibuffer buffer."
+  (let* ((real-win (selected-window))
+         (real-buf (window-buffer real-win))
+         (workspace-hud--parent-frame (selected-frame)))
+    ;; Simulate the minibuffer being active: both the minibuffer
+    ;; window check and get-mru-window are stubbed.
+    (cl-letf (((symbol-function 'minibuffer-window-active-p) (lambda (_w) t))
+              ((symbol-function 'get-mru-window)
+               (lambda (_frame &rest _) real-win)))
+      (should (eq (workspace-hud--target-buffer) real-buf)))))
+
+(ert-deftest workspace-hud-test-target-buffer-normal-when-no-minibuffer ()
+  "When the minibuffer is not active, `--target-buffer' returns the selected window's buffer."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (let ((workspace-hud--parent-frame (selected-frame)))
+      (cl-letf (((symbol-function 'minibuffer-window-active-p) (lambda (_w) nil)))
+        (should (buffer-live-p (workspace-hud--target-buffer)))))))
+
+(ert-deftest workspace-hud-test-on-change-skips-during-minibuffer ()
+  "Buffer/window change events should not schedule a sync while the minibuffer is active."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'minibuffer-window-active-p) (lambda (_w) t))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer)))
+      (workspace-hud--on-change)
+      (should-not scheduled))))
+
+(ert-deftest workspace-hud-test-on-change-schedules-without-minibuffer ()
+  "Buffer/window change events schedule a sync when the minibuffer is not active."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'minibuffer-window-active-p) (lambda (_w) nil))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer)))
+      (workspace-hud--on-change)
+      (should (eq scheduled #'workspace-hud--sync-visibility)))))
+
+(ert-deftest workspace-hud-test-no-flash-during-mx ()
+  "Integration: HUD stays visible through an M-x-like minibuffer cycle."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    ;; Make the buffer look like a real file-visiting prog-mode buffer
+    ;; so the default predicate passes.
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
+          (workspace-hud--auto-paused nil)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate))
+          (hide-called nil))
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud-visible-p) (lambda () t))
+                ((symbol-function 'workspace-hud-refresh) #'ignore)
+                ((symbol-function 'workspace-hud-hide)
+                 (lambda () (setq hide-called t)))
+                ((symbol-function 'workspace-hud--setup-triggers) #'ignore)
+                ;; Simulate minibuffer active during the sync
+                ((symbol-function 'minibuffer-window-active-p) (lambda (_w) t)))
+        ;; The on-change handler should not even schedule a sync
+        (workspace-hud--on-change)
+        (should-not workspace-hud--debounce-timer)
+        ;; Even if sync-visibility runs while minibuffer is active,
+        ;; target-buffer should resolve to the real prog-mode buffer
+        (workspace-hud--sync-visibility)
+        (should-not hide-called)))))
+
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here
