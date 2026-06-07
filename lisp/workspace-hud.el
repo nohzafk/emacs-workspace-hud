@@ -133,6 +133,8 @@ Returns non-nil if BUFFER is a file-visiting buffer derived from
 (defvar workspace-hud--frame nil)
 (defvar workspace-hud--manual-active nil
   "Non-nil when the workspace HUD is manually toggled active.")
+(defvar workspace-hud--visible-before-minibuffer nil
+  "Visibility state of the HUD before entering the minibuffer.")
 (defvar workspace-hud--in-sync nil
   "Non-nil when the HUD is currently synchronizing visibility.")
 (defvar workspace-hud--parent-frame nil)
@@ -346,6 +348,16 @@ Selecting an xwidget buffer into another window can signal
       (workspace-hud--mark-xwidget-buffer-internal
        (plist-get workspace-hud--session :buffer)))))
 
+(defun workspace-hud--minibuffer-setup ()
+  "Record HUD visibility before entering the minibuffer."
+  (when (= (minibuffer-depth) 1)
+    (setq workspace-hud--visible-before-minibuffer (workspace-hud-visible-p))))
+
+(defun workspace-hud--minibuffer-exit ()
+  "Clear recorded HUD visibility when exiting the minibuffer."
+  (when (= (minibuffer-depth) 1)
+    (setq workspace-hud--visible-before-minibuffer nil)))
+
 ;; ---------------------------------------------------------------------------
 ;; Session lifecycle
 ;; ---------------------------------------------------------------------------
@@ -355,6 +367,8 @@ Selecting an xwidget buffer into another window can signal
   (add-hook 'window-size-change-functions #'workspace-hud--on-parent-resize)
   (add-hook 'xwidget-webkit-title-change-hook #'workspace-hud--on-xwidget-title-change)
   (add-function :after after-focus-change-function #'workspace-hud--on-focus-change)
+  (add-hook 'minibuffer-setup-hook #'workspace-hud--minibuffer-setup)
+  (add-hook 'minibuffer-exit-hook #'workspace-hud--minibuffer-exit)
   (add-hook 'kill-emacs-hook #'workspace-hud-cleanup))
 
 (defun workspace-hud--remove-hooks ()
@@ -362,6 +376,8 @@ Selecting an xwidget buffer into another window can signal
   (remove-hook 'window-size-change-functions #'workspace-hud--on-parent-resize)
   (remove-hook 'xwidget-webkit-title-change-hook #'workspace-hud--on-xwidget-title-change)
   (remove-function after-focus-change-function #'workspace-hud--on-focus-change)
+  (remove-hook 'minibuffer-setup-hook #'workspace-hud--minibuffer-setup)
+  (remove-hook 'minibuffer-exit-hook #'workspace-hud--minibuffer-exit)
   (remove-hook 'kill-emacs-hook #'workspace-hud-cleanup))
 
 (defun workspace-hud--initialize-session ()
@@ -400,15 +416,20 @@ Automatic visibility also requires a parent frame wide enough to keep
 `workspace-hud-min-text-columns' columns of text beside the panel. A
 manual show skips that gate, because it is an explicit request for the
 HUD at the current frame size."
-  (and (or workspace-hud-auto-mode workspace-hud--manual-active)
-       (not workspace-hud--auto-paused)
-       (or workspace-hud--manual-active
-           (workspace-hud--frame-wide-enough-p))
-       (let ((target-buf (workspace-hud--target-buffer)))
-         (and target-buf
-              (cl-some (lambda (pred)
-                         (ignore-errors (funcall pred target-buf)))
-                       workspace-hud-show-predicates)))))
+  (let* ((frame (if (frame-live-p workspace-hud--parent-frame)
+                    workspace-hud--parent-frame
+                  (selected-frame))))
+    (if (minibuffer-window-active-p (minibuffer-window frame))
+        workspace-hud--visible-before-minibuffer
+      (and (or workspace-hud-auto-mode workspace-hud--manual-active)
+           (not workspace-hud--auto-paused)
+           (or workspace-hud--manual-active
+               (workspace-hud--frame-wide-enough-p))
+           (let ((target-buf (workspace-hud--target-buffer)))
+             (and target-buf
+                  (cl-some (lambda (pred)
+                             (ignore-errors (funcall pred target-buf)))
+                           workspace-hud-show-predicates)))))))
 
 (defun workspace-hud--sync-visibility ()
   "Synchronize HUD visibility and update its state based on the current context."
@@ -436,11 +457,21 @@ HUD at the current frame size."
 (defun workspace-hud-show ()
   "Show the HUD and keep it visible as a manual request."
   (interactive)
+  (let* ((frame (if (frame-live-p workspace-hud--parent-frame)
+                    workspace-hud--parent-frame
+                  (selected-frame))))
+    (when (minibuffer-window-active-p (minibuffer-window frame))
+      (setq workspace-hud--visible-before-minibuffer t)))
   (workspace-hud--show-manual))
 
 (defun workspace-hud-hide ()
   "Hide the HUD frame without destroying the session."
   (interactive)
+  (let* ((frame (if (frame-live-p workspace-hud--parent-frame)
+                    workspace-hud--parent-frame
+                  (selected-frame))))
+    (when (minibuffer-window-active-p (minibuffer-window frame))
+      (setq workspace-hud--visible-before-minibuffer nil)))
   (when (frame-live-p workspace-hud--frame)
     (make-frame-invisible workspace-hud--frame)))
 
@@ -902,6 +933,11 @@ frame inside `window-size-change-functions' would re-enter the hook."
   "Show the workspace HUD with manual trigger ownership."
   (setq workspace-hud--auto-paused nil)
   (setq workspace-hud--manual-active t)
+  (let* ((frame (if (frame-live-p workspace-hud--parent-frame)
+                    workspace-hud--parent-frame
+                  (selected-frame))))
+    (when (minibuffer-window-active-p (minibuffer-window frame))
+      (setq workspace-hud--visible-before-minibuffer t)))
   (workspace-hud--setup-triggers)
   (workspace-hud--sync-visibility))
 

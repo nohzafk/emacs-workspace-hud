@@ -682,6 +682,7 @@
     (let ((workspace-hud-auto-mode t)
           (workspace-hud--manual-active nil)
           (workspace-hud--auto-paused nil)
+          (workspace-hud--visible-before-minibuffer t)
           (workspace-hud-show-predicates '(workspace-hud-default-show-predicate))
           (hide-called nil))
       (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
@@ -878,6 +879,16 @@
             (run-hook-with-args 'window-size-change-functions (selected-frame))
             (should (eq scheduled #'workspace-hud--sync-visibility)))
         (workspace-hud--teardown-triggers)))))
+
+(ert-deftest workspace-hud-test-minibuffer-lifecycle-hooks ()
+  "Test that minibuffer setup and exit hooks manage `workspace-hud--visible-before-minibuffer`."
+  (let ((workspace-hud--visible-before-minibuffer nil))
+    (cl-letf (((symbol-function 'workspace-hud-visible-p) (lambda () t))
+              ((symbol-function 'minibuffer-depth) (lambda () 1)))
+      (workspace-hud--minibuffer-setup)
+      (should (eq workspace-hud--visible-before-minibuffer t))
+      (workspace-hud--minibuffer-exit)
+      (should-not workspace-hud--visible-before-minibuffer))))
 
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here
