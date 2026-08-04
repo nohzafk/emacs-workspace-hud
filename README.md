@@ -132,6 +132,7 @@ All options live in the `workspace-hud` customize group (`M-x customize-group RE
 | `workspace-hud-max-height` | `500` | Maximum child frame height in pixels. |
 | `workspace-hud-margin-right` | `19` | Horizontal offset from the right edge of the parent frame. |
 | `workspace-hud-margin-top` | `20` | Vertical offset from the top edge of the parent frame. |
+| `workspace-hud-min-text-columns` | `80` | Text columns that must remain beside the panel. The HUD auto-hides in frames too narrow to keep this much code visible. `0` disables the gate. |
 | `workspace-hud-debounce` | `0.5` | Idle seconds before refreshing after a buffer or window change. |
 | `workspace-hud-surface-background` | `nil` | Optional panel surface color. When `nil`, the default face background is used. |
 | `workspace-hud-show-predicates` | `'(workspace-hud-default-show-predicate)` | List of predicate functions deciding if the HUD should be visible. |
@@ -143,6 +144,18 @@ To reduce clutter, the HUD dynamically shows or hides itself based on your activ
 - **Automatic mode** (`workspace-hud-auto-mode`): Shows the HUD only in programming buffers (`prog-mode`) that are **inside a Git repository**. It automatically hides in special buffers (like `*Messages*`, `*Help*`, etc.), standard text buffers, or when outside of a Git repository.
 - **Manual mode** (`workspace-hud-toggle`): Shows the HUD in all `prog-mode` buffers (even if they are outside a Git repository, where it will display `"No project"`). It automatically hides when switching to special or non-programming buffers, and restores itself when you switch back to code.
 - **Needs Approval Override** (via `agent-shell-hud`): If an AI agent shell enters a `"warn"` state (e.g. requesting user command/tool execution approval), the HUD **immediately pops up** to alert you, even if you are currently looking at a README, a special buffer, or a non-programming buffer. Once the approval is processed and the warning status clears, the HUD automatically hides itself again.
+
+### Small-Frame Auto-Hide
+
+The panel is anchored over the right edge of the parent frame, so a narrow frame leaves the HUD covering the code it describes. Auto-mode therefore hides the HUD whenever fewer than `workspace-hud-min-text-columns` columns of buffer text fit beside the panel:
+
+```text
+free columns = (frame pixel width - workspace-hud-width - workspace-hud-margin-right) / frame char width
+```
+
+The threshold counts columns rather than pixels, so it follows the frame's font size instead of needing a new value per monitor. Resizing the frame re-evaluates visibility, so the HUD comes back on its own once the frame is wide enough again. Set `workspace-hud-min-text-columns` to `0` to disable the gate.
+
+This is a hard gate rather than another entry in `workspace-hud-show-predicates`: predicates are combined with `or`, so no predicate can suppress the HUD. `workspace-hud-toggle` and `workspace-hud-show` skip the gate, because an explicit manual show is a request for the HUD at the current frame size.
 
 ### Customizing Visibility
 

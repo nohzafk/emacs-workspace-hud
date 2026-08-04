@@ -746,5 +746,138 @@
         ;; Clean up.
         (workspace-hud--teardown-triggers)))))
 
+;; ---------------------------------------------------------------------------
+;; Small-frame gate
+;; ---------------------------------------------------------------------------
+
+(defmacro workspace-hud-tests--with-frame-size (pixel-width char-width &rest body)
+  "Run BODY with a mocked graphical frame of PIXEL-WIDTH and CHAR-WIDTH."
+  (declare (indent 2))
+  `(cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _f) t))
+             ((symbol-function 'frame-live-p) (lambda (_f) t))
+             ((symbol-function 'frame-pixel-width) (lambda (&optional _f) ,pixel-width))
+             ((symbol-function 'frame-char-width) (lambda (&optional _f) ,char-width)))
+     ,@body))
+
+(ert-deftest workspace-hud-test-frame-wide-enough-p-accepts-wide-frame ()
+  "A wide frame leaves more than the required columns beside the panel."
+  (let ((workspace-hud-width 260)
+        (workspace-hud-margin-right 19)
+        (workspace-hud-min-text-columns 80))
+    ;; 1728px - 279px panel = 1449px, /10 = 144 columns.
+    (workspace-hud-tests--with-frame-size 1728 10
+      (should (workspace-hud--frame-wide-enough-p)))))
+
+(ert-deftest workspace-hud-test-frame-wide-enough-p-rejects-narrow-frame ()
+  "A narrow frame leaves too few columns beside the panel."
+  (let ((workspace-hud-width 260)
+        (workspace-hud-margin-right 19)
+        (workspace-hud-min-text-columns 80))
+    ;; 700px - 279px panel = 421px, /10 = 42 columns.
+    (workspace-hud-tests--with-frame-size 700 10
+      (should-not (workspace-hud--frame-wide-enough-p)))))
+
+(ert-deftest workspace-hud-test-frame-wide-enough-p-tracks-char-width ()
+  "The gate counts columns, so a smaller font passes at the same pixel width."
+  (let ((workspace-hud-width 260)
+        (workspace-hud-margin-right 19)
+        (workspace-hud-min-text-columns 80))
+    ;; Same 700px frame: 421px / 5px chars = 84 columns.
+    (workspace-hud-tests--with-frame-size 700 5
+      (should (workspace-hud--frame-wide-enough-p)))))
+
+(ert-deftest workspace-hud-test-frame-wide-enough-p-zero-disables-gate ()
+  "Setting `workspace-hud-min-text-columns' to 0 disables the gate."
+  (let ((workspace-hud-width 260)
+        (workspace-hud-margin-right 19)
+        (workspace-hud-min-text-columns 0))
+    (workspace-hud-tests--with-frame-size 200 10
+      (should (workspace-hud--frame-wide-enough-p)))))
+
+(ert-deftest workspace-hud-test-frame-wide-enough-p-ignores-terminal-frames ()
+  "Non-graphical frames pass the gate, because the HUD never renders there."
+  (let ((workspace-hud-min-text-columns 80))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _f) nil))
+              ((symbol-function 'frame-pixel-width) (lambda (&optional _f) 80))
+              ((symbol-function 'frame-char-width) (lambda (&optional _f) 1)))
+      (should (workspace-hud--frame-wide-enough-p)))))
+
+(ert-deftest workspace-hud-test-narrow-frame-hides-in-auto-mode ()
+  "Auto-mode hides the HUD in a prog-mode buffer when the frame is too narrow."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
+          (workspace-hud--auto-paused nil)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate))
+          shown hidden)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
+                ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+                ((symbol-function 'workspace-hud--setup-triggers) #'ignore)
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
+        (workspace-hud-tests--with-frame-size 700 10
+          (workspace-hud--sync-visibility)
+          (should-not shown)
+          (should hidden))))))
+
+(ert-deftest workspace-hud-test-narrow-frame-still-allows-manual-show ()
+  "A manual show ignores the width gate, since the user asked for the HUD."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active t)
+          (workspace-hud--auto-paused nil)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate)))
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo")))
+        (workspace-hud-tests--with-frame-size 700 10
+          (should (workspace-hud--should-show-p)))))))
+
+(ert-deftest workspace-hud-test-widened-frame-shows-in-auto-mode ()
+  "Auto-mode shows the HUD again once the frame is wide enough."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (rename-buffer "fake.el" t)
+    (setq buffer-file-name "/tmp/fake.el")
+    (let ((workspace-hud-auto-mode t)
+          (workspace-hud--manual-active nil)
+          (workspace-hud--auto-paused nil)
+          (workspace-hud-show-predicates '(workspace-hud-default-show-predicate))
+          shown hidden)
+      (cl-letf (((symbol-function 'workspace-hud--target-buffer) #'current-buffer)
+                ((symbol-function 'workspace-hud--resolve-root) (lambda () "/tmp/repo"))
+                ((symbol-function 'workspace-hud-visible-p) (lambda () nil))
+                ((symbol-function 'workspace-hud--setup-triggers) #'ignore)
+                ((symbol-function 'workspace-hud--show-frame) (lambda () (setq shown t)))
+                ((symbol-function 'workspace-hud-hide) (lambda () (setq hidden t))))
+        (workspace-hud-tests--with-frame-size 1728 10
+          (workspace-hud--sync-visibility)
+          (should shown)
+          (should-not hidden))))))
+
+(ert-deftest workspace-hud-test-resize-trigger ()
+  "A window size change schedules a debounced visibility sync."
+  (let ((workspace-hud-auto-mode t)
+        (workspace-hud--manual-active nil)
+        (workspace-hud--debounce-timer nil)
+        scheduled)
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat fn)
+                 (setq scheduled fn)
+                 'workspace-hud-test-timer))
+              ((symbol-function 'cancel-timer) #'ignore))
+      (workspace-hud--setup-triggers)
+      (unwind-protect
+          (progn
+            (run-hook-with-args 'window-size-change-functions (selected-frame))
+            (should (eq scheduled #'workspace-hud--sync-visibility)))
+        (workspace-hud--teardown-triggers)))))
+
 (provide 'workspace-hud-tests)
 ;;; workspace-hud-tests.el ends here

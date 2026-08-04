@@ -21,7 +21,6 @@ Load the HUD in your `init.el`:
 
 ;; Configure HUD dimensions and margins:
 (setq workspace-hud-width 260
-      workspace-hud-height 230
       workspace-hud-margin-right 19
       workspace-hud-margin-top 60)
 
@@ -40,6 +39,20 @@ To let Emacs manage visibility automatically, enable `workspace-hud-auto-mode`:
 Auto-mode hooks into window selection, buffer changes, and file saves. It automatically displays the HUD whenever you focus on a file inside a Git repo, and hides the child frame when you switch to helper buffers outside Git (such as `*scratch*`, `*Help*`, or Dired). 
 
 *Note: If you manually toggle the HUD off while auto-mode is active, automatic reappearance will pause until you explicitly toggle the HUD on again.*
+
+### Small-Frame Auto-Hide
+
+The panel sits over the right edge of the parent frame, so a narrow frame leaves the HUD covering the code. Auto-mode hides the HUD when fewer than `workspace-hud-min-text-columns` columns of text fit beside the panel, and shows it again when the frame grows back:
+
+```elisp
+;; Require 100 columns of code beside the panel (default is 80):
+(setq workspace-hud-min-text-columns 100)
+
+;; Or never auto-hide on size:
+(setq workspace-hud-min-text-columns 0)
+```
+
+The threshold is measured in the frame's own character width, so it tracks font-size changes rather than needing one pixel value per display.
 
 ## Data Collection Details
 

@@ -78,6 +78,17 @@ git submodule update --init --recursive" egui-dir))
   "Vertical offset from the top edge of the parent frame, in pixels."
   :type 'integer)
 
+(defcustom workspace-hud-min-text-columns 80
+  "Text columns that must remain beside the HUD for it to stay visible.
+The HUD covers `workspace-hud-width' plus `workspace-hud-margin-right'
+pixels at the right edge of the parent frame. When fewer than this many
+columns of buffer text fit next to that panel, the HUD hides itself
+instead of covering the code.
+
+The value counts columns rather than pixels, so the threshold tracks the
+frame's own font size. Set it to 0 to disable the gate."
+  :type 'integer)
+
 (defcustom workspace-hud-debounce 0.5
   "Idle seconds before refreshing after a buffer or window change."
   :type 'number)
@@ -195,6 +206,31 @@ SECTION-DATA is a plist containing:
          (r-count (cl-reduce #'+ (mapcar (lambda (s) (length (cdr (assoc 'rows s)))) sections) :initial-value 0))
          (computed (+ 28 (* 35 s-count) (* 24 r-count) (* 18 (max 0 (1- s-count))))))
     (max workspace-hud-min-height (min workspace-hud-max-height computed))))
+
+(defun workspace-hud--effective-parent-frame ()
+  "Return the frame the HUD is anchored to, or would anchor to."
+  (if (frame-live-p workspace-hud--parent-frame)
+      workspace-hud--parent-frame
+    (selected-frame)))
+
+(defun workspace-hud--frame-wide-enough-p (&optional frame)
+  "Return non-nil when FRAME has room for the HUD beside the buffer text.
+FRAME defaults to `workspace-hud--effective-parent-frame'. The frame is
+wide enough when at least `workspace-hud-min-text-columns' columns remain
+after the panel takes `workspace-hud-width' plus
+`workspace-hud-margin-right' pixels from the right edge.
+
+Non-graphical frames always pass. The HUD needs a GUI child frame to
+render at all, so the pixel arithmetic carries no meaning on a terminal."
+  (let ((frame (or frame (workspace-hud--effective-parent-frame))))
+    (or (<= workspace-hud-min-text-columns 0)
+        (not (frame-live-p frame))
+        (not (display-graphic-p frame))
+        (let* ((char-width (max 1 (frame-char-width frame)))
+               (panel-width (+ workspace-hud-width workspace-hud-margin-right))
+               (free-columns (/ (- (frame-pixel-width frame) panel-width)
+                                char-width)))
+          (>= free-columns workspace-hud-min-text-columns)))))
 
 (defun workspace-hud--reposition-frame ()
   "Lock the panel frame to the top-right corner of the parent frame."
@@ -358,9 +394,16 @@ Selecting an xwidget buffer into another window can signal
 The HUD should be visible if either `workspace-hud-auto-mode' or
 `workspace-hud--manual-active' is non-nil, we are not auto-paused,
 and at least one predicate in `workspace-hud-show-predicates'
-returns non-nil for the target buffer."
+returns non-nil for the target buffer.
+
+Automatic visibility also requires a parent frame wide enough to keep
+`workspace-hud-min-text-columns' columns of text beside the panel. A
+manual show skips that gate, because it is an explicit request for the
+HUD at the current frame size."
   (and (or workspace-hud-auto-mode workspace-hud--manual-active)
        (not workspace-hud--auto-paused)
+       (or workspace-hud--manual-active
+           (workspace-hud--frame-wide-enough-p))
        (let ((target-buf (workspace-hud--target-buffer)))
          (and target-buf
               (cl-some (lambda (pred)
@@ -804,6 +847,17 @@ HUD to flash off and back on."
      workspace-hud-debounce
      #'workspace-hud--sync-visibility)))
 
+(defun workspace-hud--on-resize (&rest _)
+  "Debounced visibility sync after a frame or window size change.
+A resize can cross `workspace-hud-min-text-columns' in either direction,
+so the HUD re-evaluates visibility instead of only repositioning the
+panel. The sync runs from an idle timer because showing or hiding a child
+frame inside `window-size-change-functions' would re-enter the hook."
+  (when (or workspace-hud-auto-mode workspace-hud--manual-active)
+    (workspace-hud--schedule
+     workspace-hud-debounce
+     #'workspace-hud--sync-visibility)))
+
 (defun workspace-hud--on-save ()
   "Refresh shortly after saving a file."
   (when (or workspace-hud-auto-mode workspace-hud--manual-active)
@@ -822,6 +876,7 @@ HUD to flash off and back on."
   "Register collection triggers."
   (add-hook 'window-buffer-change-functions #'workspace-hud--on-change)
   (add-hook 'window-selection-change-functions #'workspace-hud--on-change)
+  (add-hook 'window-size-change-functions #'workspace-hud--on-resize)
   (add-hook 'after-save-hook #'workspace-hud--on-save)
   (advice-add 'flymake--handle-report :after #'workspace-hud--on-diagnostics-changed)
   (add-hook 'flycheck-after-syntax-check-hook #'workspace-hud--on-diagnostics-changed))
@@ -830,6 +885,7 @@ HUD to flash off and back on."
   "Remove collection triggers."
   (remove-hook 'window-buffer-change-functions #'workspace-hud--on-change)
   (remove-hook 'window-selection-change-functions #'workspace-hud--on-change)
+  (remove-hook 'window-size-change-functions #'workspace-hud--on-resize)
   (remove-hook 'after-save-hook #'workspace-hud--on-save)
   (advice-remove 'flymake--handle-report #'workspace-hud--on-diagnostics-changed)
   (remove-hook 'flycheck-after-syntax-check-hook #'workspace-hud--on-diagnostics-changed)
