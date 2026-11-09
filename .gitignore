@@ -10,3 +10,6 @@ target/
 
 # cargo-run-bin local tool install dir
 /.bin/
+
+# The wasm crate is a library; its lock file is not tracked
+ui/Cargo.lock
